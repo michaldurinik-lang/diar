@@ -1,0 +1,1210 @@
+<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#1C1932"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png"><style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,-apple-system,sans-serif;background:#F4F2FA}img{max-width:100%}[hidden]{display:none!important}</style>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script>
+(function(){
+  var CFG={apiKey:"AIzaSyCGac_azAo0egjP5bCTOYdQTWQ0fcdh0_E",authDomain:"muj-diar.firebaseapp.com",projectId:"muj-diar",storageBucket:"muj-diar.firebasestorage.app",messagingSenderId:"354394392255",appId:"1:354394392255:web:021fcfc72ce2cc24d4680a"};
+  var SCOPE='https://www.googleapis.com/auth/calendar',TK='diar.gtoken';
+  var fb=window.firebase;
+  if(!fb){document.addEventListener('DOMContentLoaded',function(){var d=document.createElement('div');d.style.cssText='padding:24px;font:16px system-ui';d.textContent='Nepodařilo se načíst Firebase. Zkontroluj připojení k internetu.';document.body.appendChild(d);});return;}
+  fb.initializeApp(CFG);
+  var auth=fb.auth(),fs=fb.firestore(),curUser=null;
+  try{fs.enablePersistence({synchronizeTabs:true}).catch(function(){});}catch(e){}
+  function getTok(){try{var o=JSON.parse(localStorage.getItem(TK)||'null');if(o&&o.exp>Date.now()+60000)return o.t;}catch(e){}return '';}
+  function setTok(t){try{localStorage.setItem(TK,JSON.stringify({t:t,exp:Date.now()+3300000}));}catch(e){}}
+  function ready(fn){if(document.body)fn();else document.addEventListener('DOMContentLoaded',fn);}
+  function signIn(){
+    var p=new fb.auth.GoogleAuthProvider();p.addScope(SCOPE);p.setCustomParameters({prompt:'select_account'});
+    return auth.signInWithPopup(p).then(function(r){var c=r.credential;if(c&&c.accessToken)setTok(c.accessToken);location.reload();}).catch(function(e){alert('Přihlášení se nepovedlo: '+(e&&e.message||e));});
+  }
+  var userP=new Promise(function(res){auth.onAuthStateChanged(function(u){curUser=u;res(u);});});
+  function box(html){var d=document.createElement('div');d.id='gate';d.style.cssText='position:fixed;inset:0;z-index:999;display:grid;place-items:center;background:#121020;color:#EEEBFB;font:16px system-ui,sans-serif;padding:24px;text-align:center';d.innerHTML=html;document.body.appendChild(d);return d;}
+  function showLogin(){ready(function(){if(document.getElementById('gate'))return;var d=box('<div style="max-width:340px"><div style="font:800 2rem system-ui;margin-bottom:8px">Můj diář</div><p style="color:#A09BC0;margin:0 0 20px">Přihlas se svým Google účtem. Tvoje data jsou jen tvoje a budou na všech zařízeních stejná.</p><button id="gIn" style="font:700 1rem system-ui;padding:14px 22px;border-radius:14px;border:0;background:#9084FF;color:#14112A;cursor:pointer">Přihlásit se přes Google</button></div>');d.querySelector('#gIn').onclick=signIn;});}
+  function calBar(){ready(function(){if(getTok()||document.getElementById('calbar'))return;var b=document.createElement('div');b.id='calbar';b.style.cssText='position:fixed;left:0;right:0;top:0;z-index:90;background:#42340F;color:#F2B646;font:600 .85rem system-ui;padding:8px 12px;display:flex;gap:10px;align-items:center;justify-content:center;padding-top:calc(8px + env(safe-area-inset-top,0px))';b.innerHTML='<span>Google Kalendář je odpojený.</span><button style="font:700 .85rem system-ui;padding:6px 12px;border-radius:10px;border:0;background:#F2B646;color:#2a1f00;cursor:pointer">Připojit</button>';b.querySelector('button').onclick=signIn;document.body.appendChild(b);});}
+  function gcal(tool,inp){
+    var t=getTok();if(!t){calBar();var e=new Error('needs_reauth');e.code='needs_reauth';return Promise.reject(e);}
+    var base='https://www.googleapis.com/calendar/v3/calendars/primary/events',h={Authorization:'Bearer '+t};
+    function fail(r){var e=new Error('http '+r.status);e.code=(r.status===401?'needs_reauth':r.status===403?'forbidden':'tool_error');if(r.status===401){try{localStorage.removeItem(TK);}catch(x){}calBar();}return e;}
+    if(tool==='list_events'){
+      var q='?singleEvents=true&orderBy=startTime&maxResults='+(inp.pageSize||250)+'&timeMin='+encodeURIComponent(inp.startTime)+'&timeMax='+encodeURIComponent(inp.endTime)+'&timeZone='+encodeURIComponent(inp.timeZone||'Europe/Prague')+(inp.pageToken?'&pageToken='+encodeURIComponent(inp.pageToken):'');
+      return fetch(base+q,{headers:h}).then(function(r){if(!r.ok)throw fail(r);return r.json();}).then(function(j){return {payload:j};});
+    }
+    if(tool==='create_event'){
+      var b={summary:inp.summary};
+      if(inp.allDay){b.start={date:inp.startTime.slice(0,10)};b.end={date:inp.endTime.slice(0,10)};}
+      else{b.start={dateTime:inp.startTime,timeZone:inp.timeZone};b.end={dateTime:inp.endTime,timeZone:inp.timeZone};}
+      if(inp.overrideReminders)b.reminders={useDefault:false,overrides:inp.overrideReminders};
+      if(inp.recurrenceData)b.recurrence=inp.recurrenceData;
+      return fetch(base,{method:'POST',headers:Object.assign({'Content-Type':'application/json'},h),body:JSON.stringify(b)}).then(function(r){if(!r.ok)throw fail(r);return r.json();}).then(function(j){return {payload:j};});
+    }
+    if(tool==='delete_event'){
+      return fetch(base+'/'+encodeURIComponent(inp.eventId),{method:'DELETE',headers:h}).then(function(r){if(!r.ok&&r.status!==410)throw fail(r);return {payload:{}};});
+    }
+    return Promise.reject(new Error('unknown tool'));
+  }
+  var gate=function(){return userP.then(function(u){if(!u){showLogin();return new Promise(function(){});}return u;});};
+  window.claude={use:function(n){
+    if(n==='db')return gate().then(function(){return {collection:function(path){return fs.collection(path.replace(/^data\/users\//,'users/')+'/d');}};});
+    if(n==='user')return gate().then(function(u){return {id:function(){return Promise.resolve(u.uid);}};});
+    if(n==='mcp')return gate().then(function(){if(!getTok())calBar();return {callTool:function(s,t,i){return gcal(t,i||{});}};});
+    return Promise.resolve(null);
+  }};
+  /* backup: download / restore */
+  var KEYS_=['events','tasks','shop','meals','goals','habits','notes','sched','fin','meta'];
+  window.diarBackup=function(){
+    var out={},c=fs.collection('users/'+curUser.uid+'/d');
+    return c.get().then(function(s){s.docs.forEach(function(d){var v=d.data();if(v&&v.v!=null)out[d.id]=v.v;});var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(out)],{type:'application/json'}));a.download='zaloha-diare-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();a.remove();});
+  };
+  window.diarRestore=function(file){
+    var r=new FileReader();r.onload=function(){try{var o=JSON.parse(r.result);var c=fs.collection('users/'+curUser.uid+'/d'),ps=[];Object.keys(o).forEach(function(k){if(KEYS_.indexOf(k)>=0)ps.push(c.doc(k).set({v:o[k]}));});Promise.all(ps).then(function(){alert('Záloha je načtená ('+ps.length+' částí). Stránka se obnoví.');location.reload();});}catch(e){alert('Soubor se nepodařilo přečíst.');}};r.readAsText(file);
+  };
+  ready(function(){
+    userP.then(function(u){
+      if(!u)return;
+      var st=document.getElementById('status');if(!st)return;
+      var w=document.createElement('div');w.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:.78rem';
+      w.innerHTML='<a href="#" id="bkD" style="color:inherit">Stáhnout zálohu</a><a href="#" id="bkU" style="color:inherit">Načíst zálohu</a><a href="#" id="bkO" style="color:inherit">Odhlásit</a><input type="file" id="bkF" accept=".json,application/json" hidden>';
+      st.parentNode.insertBefore(w,st.nextSibling);
+      w.querySelector('#bkD').onclick=function(e){e.preventDefault();window.diarBackup();};
+      w.querySelector('#bkU').onclick=function(e){e.preventDefault();w.querySelector('#bkF').click();};
+      w.querySelector('#bkF').onchange=function(){if(this.files[0])window.diarRestore(this.files[0]);};
+      w.querySelector('#bkO').onclick=function(e){e.preventDefault();try{localStorage.removeItem(TK);}catch(x){}auth.signOut().then(function(){location.reload();});};
+    });
+    if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(function(){});
+  });
+})();
+</script>
+<title>Můj diář</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: sidebar navigation on desktop, bottom tab bar on phones; one module per screen, cards on a soft lavender ground */
+:root{
+  --bg:#F4F2FA; --surface:#FFFFFF; --surface2:#ECE9F7; --ink:#1B1830; --muted:#625E7C; --line:#DFDAF0;
+  --accent:#5545D6; --accent-ink:#FFFFFF; --accent-soft:#E6E2FB;
+  --osobni:#D6406A; --osobni-soft:#FBE3EA; --prace:#13846C; --prace-soft:#D9F1EA;
+  --hol:#C8372D; --blue:#2B7FD0; --warn:#B7790F; --warn-soft:#FBEFD2; --ok:#13846C;
+  --shadow:0 1px 2px rgba(40,30,90,.06),0 6px 18px rgba(40,30,90,.06);
+  --f-display:"Bricolage Grotesque","Trebuchet MS",system-ui,sans-serif;
+  --f-body:"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121020; --surface:#1C1932; --surface2:#262244; --ink:#EEEBFB; --muted:#A09BC0; --line:#322D55;
+  --accent:#9084FF; --accent-ink:#14112A; --accent-soft:#2E2961;
+  --osobni:#F27B9D; --osobni-soft:#4A2336; --prace:#4CCBA8; --prace-soft:#173B34;
+  --hol:#FF8A80; --blue:#6FB0F0; --warn:#F2B646; --warn-soft:#42340F; --ok:#4CCBA8;
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 6px 18px rgba(0,0,0,.28); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#121020; --surface:#1C1932; --surface2:#262244; --ink:#EEEBFB; --muted:#A09BC0; --line:#322D55;
+  --accent:#9084FF; --accent-ink:#14112A; --accent-soft:#2E2961;
+  --osobni:#F27B9D; --osobni-soft:#4A2336; --prace:#4CCBA8; --prace-soft:#173B34;
+  --hol:#FF8A80; --blue:#6FB0F0; --warn:#F2B646; --warn-soft:#42340F; --ok:#4CCBA8;
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 6px 18px rgba(0,0,0,.28); color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 var(--f-body);margin:0}
+button,input,select,textarea{font:inherit;color:inherit}
+h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;letter-spacing:-.01em}
+h1{font-size:1.9rem;font-weight:800}
+h2{font-size:1.15rem;font-weight:700}
+h3{font-size:1rem;font-weight:700}
+.muted{color:var(--muted)}
+.small{font-size:.82rem}
+.tnum{font-variant-numeric:tabular-nums}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.app{display:grid;grid-template-columns:230px minmax(0,1fr);height:100%}
+.side{background:var(--surface);border-right:1px solid var(--line);padding:20px 14px;display:flex;flex-direction:column;gap:18px;overflow:auto}
+.brand{font-family:var(--f-display);font-weight:800;font-size:1.35rem;padding:0 8px;display:flex;align-items:center;gap:10px}
+.brand i{width:30px;height:30px;border-radius:9px;background:var(--accent);display:grid;place-items:center;color:var(--accent-ink)}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav button{display:flex;align-items:center;gap:12px;padding:10px 12px;border:0;background:none;border-radius:10px;cursor:pointer;text-align:left;font-weight:600;color:var(--muted)}
+.nav button:hover{background:var(--surface2);color:var(--ink)}
+.nav button[aria-current="page"]{background:var(--accent-soft);color:var(--accent)}
+.nav svg,.tabbar svg{width:20px;height:20px;flex:none}
+.side .foot{margin-top:auto;display:flex;flex-direction:column;gap:10px}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);background:var(--surface2);border-radius:10px;padding:3px;gap:2px}
+.seg button{border:0;background:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.84rem;font-weight:600;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+.status{font-size:.78rem;color:var(--muted);display:flex;gap:6px;align-items:center;padding:0 4px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
+.dot.off{background:var(--warn)}
+.themebtn{border:1px solid var(--line);background:none;border-radius:10px;padding:8px;cursor:pointer;font-weight:600;color:var(--muted)}
+
+.main{overflow:auto;padding:26px clamp(16px,3vw,36px) 40px}
+.topbar{display:none}
+.page{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+.head{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:end;justify-content:space-between}
+.head p{margin:4px 0 0}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr))}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:var(--shadow);min-width:0}
+.card>h2,.card>.ch{margin-bottom:12px}
+.ch{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.banner{background:var(--warn-soft);border:1px solid var(--warn);border-radius:12px;padding:10px 14px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;justify-content:space-between;font-size:.9rem}
+
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:8px 14px;cursor:pointer;font-weight:600}
+.btn:hover{background:var(--surface2)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.pri:hover{filter:brightness(1.08)}
+.btn.sm{padding:5px 10px;font-size:.84rem}
+.ibtn{border:0;background:none;cursor:pointer;color:var(--muted);padding:4px 6px;border-radius:8px;line-height:1}
+.ibtn:hover{background:var(--surface2);color:var(--hol)}
+input[type=text],input[type=date],input[type=time],input[type=number],select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px 11px;min-width:0;width:100%}
+textarea{resize:vertical;min-height:90px}
+.form{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.form .grow{flex:1 1 180px}
+.form select,.form input[type=date],.form input[type=time],.form input[type=number]{width:auto;flex:0 1 auto}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:5px 12px;cursor:pointer;font-size:.86rem;font-weight:600;color:var(--muted)}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.pill{display:inline-block;font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:99px;letter-spacing:.02em;white-space:nowrap}
+.pill.osobni{background:var(--osobni-soft);color:var(--osobni)}
+.pill.prace{background:var(--prace-soft);color:var(--prace)}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}
+.pill.hol{background:var(--osobni-soft);color:var(--hol)}
+
+.list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:9px 2px;border-top:1px solid var(--line);min-width:0}
+.row:first-child{border-top:0}
+.row .t{flex:1 1 9em;min-width:min(9em,100%);overflow-wrap:break-word}
+.row .t.done{text-decoration:line-through;color:var(--muted)}
+.row .acts{display:flex;align-items:center;gap:6px;margin-left:auto;flex:none}
+.row .when{font-size:.82rem;color:var(--muted);white-space:nowrap}
+.row .when.late{color:var(--hol);font-weight:700}
+.chk{appearance:none;width:20px;height:20px;border:2px solid var(--muted);border-radius:6px;display:grid;place-items:center;cursor:pointer;flex:none;margin:0;background:var(--surface)}
+.chk:checked{background:var(--accent);border-color:var(--accent)}
+.chk:checked::after{content:"";width:9px;height:5px;border:2px solid var(--accent-ink);border-top:0;border-right:0;transform:rotate(-45deg) translate(1px,-1px)}
+.empty{padding:18px 4px;color:var(--muted);text-align:center;font-size:.92rem}
+
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.cal .dw{font-size:.74rem;font-weight:700;color:var(--muted);text-align:center;padding:4px 0;text-transform:uppercase;letter-spacing:.06em}
+.day{border:1px solid var(--line);background:var(--surface);border-radius:10px;min-height:76px;padding:5px 6px;display:flex;flex-direction:column;gap:2px;cursor:pointer;text-align:left;min-width:0;overflow:hidden}
+.day:hover{border-color:var(--accent)}
+.day.out{opacity:.45}
+.day.we .n{color:var(--muted)}
+.day.hol .n{color:var(--hol)}
+.day.today{background:var(--accent-soft);border-color:var(--accent)}
+.day.sel{outline:2px solid var(--accent);outline-offset:-1px}
+.day .n{font-weight:700;font-size:.92rem}
+.day .nm{font-size:.68rem;color:var(--muted);line-height:1.15;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.day .ev{display:flex;gap:3px;flex-wrap:wrap;margin-top:auto}
+.day .ev i{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+.day .ev i.osobni{background:var(--osobni)}.day .ev i.prace{background:var(--prace)}
+.mnav{display:flex;align-items:center;gap:8px}
+.mnav strong{font-family:var(--f-display);font-size:1.15rem;min-width:9.5em;text-align:center}
+
+.sect{font-size:.74rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:12px 0 2px}
+.sect:first-child{margin-top:0}
+.bar{height:10px;background:var(--surface2);border-radius:99px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--accent);border-radius:99px}
+.bar.g>i{background:var(--prace)}
+.days{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr))}
+.dcard{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.dcard.today{border-color:var(--accent);background:var(--accent-soft)}
+.dcard h3{display:flex;justify-content:space-between;align-items:baseline;gap:6px}
+.dcard label{font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:flex;flex-direction:column;gap:2px}
+.dcard label input{text-transform:none;letter-spacing:0;font-weight:400;font-size:.9rem;padding:7px 9px}
+.hab{display:grid;grid-template-columns:minmax(90px,1.4fr) repeat(7,minmax(30px,1fr)) 36px;gap:6px;align-items:center;min-width:0}
+.hab .h{font-size:.72rem;font-weight:700;color:var(--muted);text-align:center;text-transform:uppercase}
+.hab .name{font-weight:600;overflow-wrap:anywhere}
+.hb{width:100%;max-width:34px;aspect-ratio:1;border-radius:50%;border:2px solid var(--line);background:var(--surface);cursor:pointer;justify-self:center;padding:0}
+.hb[aria-pressed="true"]{background:var(--prace);border-color:var(--prace)}
+.hb.td{border-color:var(--accent)}
+.note{display:flex;flex-direction:column;gap:6px}
+.note input.nt{font-weight:700;border-color:transparent;padding-left:4px;background:none}
+.note textarea{border-color:transparent;background:var(--surface2);min-height:110px}
+.note .ft{display:flex;justify-content:space-between;align-items:center}
+.sum{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.sum .card b{font-family:var(--f-display);font-size:1.5rem;display:block}
+.pos{color:var(--ok)}.neg{color:var(--hol)}
+.cat{display:grid;grid-template-columns:100px 1fr auto;gap:10px;align-items:center;padding:5px 0;font-size:.9rem}
+.sched{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,140px),1fr))}
+.blk{border-radius:10px;padding:8px 10px;background:var(--surface2);border-left:4px solid var(--accent);display:flex;justify-content:space-between;gap:6px;align-items:flex-start}
+.blk.osobni{border-color:var(--osobni)}.blk.prace{border-color:var(--prace)}
+.blk b{display:block;overflow-wrap:anywhere}
+.more{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.more button{display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:16px;border-radius:14px;border:1px solid var(--line);background:var(--surface);cursor:pointer;font-weight:700;box-shadow:var(--shadow)}
+.more svg{width:24px;height:24px;color:var(--accent)}
+
+.pill.g{background:var(--accent-soft);color:var(--accent)}
+.wev{border-left:4px solid var(--accent);background:var(--surface2);border-radius:8px;padding:5px 8px;display:flex;flex-direction:column;overflow-wrap:anywhere}
+.wev.osobni{border-color:var(--osobni)}.wev.prace{border-color:var(--prace)}
+.dh{display:flex;justify-content:space-between;align-items:baseline;border:0;background:none;padding:0;cursor:pointer;text-align:left;width:100%;font-family:var(--f-display);font-weight:700}
+.dcard.selc{outline:2px solid var(--accent)}
+.day .evt{font-size:.68rem;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-left:3px solid var(--accent);padding:0 3px;border-radius:2px;background:var(--surface2)}
+.day .evt.osobni{border-color:var(--osobni)}.day .evt.prace{border-color:var(--prace)}
+.tools{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.calhead{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center}
+.calhead .seg{min-width:230px}
+a.btn{text-decoration:none;display:inline-block;color:inherit}
+@media (min-width:861px){.day .ev{display:none}.day{min-height:100px}}
+@media (max-width:860px){.day .evt{display:none}}
+.page.wide{max-width:1240px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom,0px));max-width:min(92vw,520px);background:var(--ink);color:var(--bg);padding:10px 14px;border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.35);z-index:60;font-size:.9rem;text-align:center}
+@media (min-width:861px){.toast{bottom:24px}}
+.tp{display:inline-flex;align-items:center;gap:2px}
+.tp b{color:var(--muted)}
+.tp select{padding:7px 4px}
+.tm{width:5.4em;text-align:center}
+.tm.bad{border-color:var(--hol);outline-color:var(--hol)}
+.day,.dh{touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.modal{position:fixed;inset:0;z-index:50;display:flex;justify-content:center;align-items:flex-start;padding:max(16px,env(safe-area-inset-top,0px)) 12px calc(16px + env(safe-area-inset-bottom,0px));overflow:auto}
+.backdrop{position:fixed;inset:0;background:rgba(15,12,35,.55)}
+.panel{position:relative;z-index:1;background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.35);width:min(100%,620px);margin:auto 0;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.swatches{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
+.sw{position:relative;cursor:pointer;display:inline-flex}
+.sw input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
+.sw i{display:block;width:22px;height:22px;border-radius:50%;box-shadow:0 0 0 1px var(--line)}
+.sw.def i{background:repeating-linear-gradient(45deg,var(--surface2) 0 4px,var(--line) 4px 6px)}
+.sw input:checked+i{box-shadow:0 0 0 2px var(--surface),0 0 0 4px var(--ink)}
+.sw input:focus-visible+i{outline:2px solid var(--accent);outline-offset:3px}
+.cdot{width:10px;height:10px;border-radius:50%;flex:none;align-self:center}
+.dateline{margin:4px 0 0;font-size:.98rem;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}
+.tiles{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr))}
+.tile{display:flex;align-items:center;gap:10px;border:0;border-radius:14px;padding:12px 12px;min-height:56px;cursor:pointer;color:#fff;font-weight:700;text-align:left;box-shadow:var(--shadow)}
+.tile:hover{filter:brightness(1.06)}
+.tile .ti{width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.22);display:grid;place-items:center;flex:none}
+.tile .ti svg{width:20px;height:20px}
+.tile .tl{flex:1;min-width:0;line-height:1.15}
+.tile .tc{font-size:1.4rem;line-height:1;opacity:.8}
+.t-plan{background:#4B3FD1}.t-cal{background:#7A5CE0}.t-tasks{background:#17866A}.t-shop{background:#C2621A}.t-meals{background:#2F6FD6}.t-train{background:#CF4A46}.t-notes{background:#C93C76}.t-sched{background:#217C91}
+.tile.t-fin{background:#F2B93B;color:#3A2A00}.tile.t-fin .ti{background:rgba(58,42,0,.14)}
+.spreadwrap{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0;align-items:start}
+.spread{display:grid;grid-template-columns:minmax(0,1fr) 22px minmax(0,1fr);background:#2E2B52;border-radius:18px;padding:14px;box-shadow:var(--shadow);min-width:0}
+.pg{background:var(--surface);border-radius:10px;padding:14px;min-width:0;display:flex;flex-direction:column;gap:10px}
+.pgh{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;justify-content:space-between}
+.pgh h2{display:flex;align-items:center;gap:8px;font-size:1.05rem}
+.pgh h2 svg{width:20px;height:20px;color:var(--accent)}
+.mnav{display:flex;align-items:center;gap:8px}
+.mnav strong{min-width:6.5em;text-align:center;font-size:.9rem}
+.spine{background:repeating-linear-gradient(to bottom,transparent 0 9px,#D9B68A 9px 13px,transparent 13px 22px);margin:6px 3px;border-radius:4px}
+.cal.mini{gap:3px}
+.cal.mini .day{min-height:62px;padding:4px}
+.cal.mini .day .evt{font-size:.62rem}
+.cal.mini .day.inweek{border-color:var(--accent)}
+.pweek{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(135px,1fr))}
+.pday{border:1px solid var(--line);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:5px;min-width:0;background:var(--surface)}
+.pday.today{background:var(--accent-soft);border-color:var(--accent)}
+.pday.we .ph b{color:var(--muted)}
+.pday.und{background:var(--surface2);border-style:dashed}
+.ph{display:flex;flex-direction:column;line-height:1.2}
+.ph .hl{color:var(--hol)}
+.ptask{display:flex;gap:6px;align-items:flex-start;font-size:.84rem;line-height:1.25;cursor:pointer;overflow-wrap:anywhere}
+.ptask .chk{width:16px;height:16px;border-radius:5px;margin-top:1px}
+.ptask .done{text-decoration:line-through;color:var(--muted)}
+.padt{display:flex;align-items:center;gap:4px;margin-top:3px;flex-wrap:wrap}.padt select{padding:4px 2px;font-size:.78rem}.padd input[type=text]{width:100%;border:0;border-bottom:1px dashed var(--line);background:none;padding:4px 2px;font-size:.82rem;border-radius:0}
+.padd input:focus{border-bottom-color:var(--accent);outline:none}
+.stabs{display:flex;flex-direction:column;gap:6px;padding-top:18px}
+.stab{width:36px;height:42px;border:0;border-radius:0 12px 12px 0;color:#fff;display:grid;place-items:center;cursor:pointer;margin-left:-2px}
+.stab svg{width:19px;height:19px}
+.stab.t-fin{color:#3A2A00}
+@media (max-width:1000px){.spread{grid-template-columns:minmax(0,1fr);gap:10px}.spine{display:none}.spreadwrap{grid-template-columns:minmax(0,1fr)}}
+@media (min-width:861px) and (max-width:1000px){.stabs{display:none}}
+.pgdots{display:none}
+@media (max-width:860px){
+.spreadwrap{position:relative}
+.spreadwrap::before{content:'';display:block;height:22px;border-radius:18px 18px 0 0;background:#2E2B52 repeating-linear-gradient(to right,transparent 0 9px,#D9B68A 9px 22px,transparent 22px 26px) 0 7px/100% 6px no-repeat}
+.spreadwrap{grid-template-columns:minmax(0,1fr)}
+.stabs{display:flex;flex-direction:row;justify-content:flex-end;gap:6px;padding:0 14px;margin-top:-1px}
+.stab{width:48px;height:32px;border-radius:0 0 12px 12px;margin:0}
+.spread{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;gap:12px;padding:0 14px 14px;border-radius:0 0 18px 18px;scrollbar-width:none}
+.spread::-webkit-scrollbar{display:none}
+.spread>.pg{flex:0 0 100%;box-shadow:0 0 0 1px rgba(255,255,255,.04);scroll-snap-align:center;scroll-snap-stop:always;padding:10px}
+.cal.mini{gap:2px}
+.cal.mini .day{min-height:72px;padding:3px 2px;gap:2px}
+.cal.mini .day .evt{display:block;font-size:.56rem;padding:0 2px;border-left-width:2px}
+.cal.mini .day .ev{display:none}
+.cal.mini .day .nm{display:block;font-size:.56rem}
+.pweek{grid-template-columns:repeat(2,minmax(0,1fr))}
+.pgdots{display:flex;justify-content:center;gap:8px;padding:8px 0 2px;position:relative}
+.pgdots button{border:0;background:none;color:var(--muted);font-size:.78rem;font-weight:600;padding:6px 12px;border-radius:99px;cursor:pointer}
+.pgdots button.on{background:var(--accent-soft);color:var(--accent)}
+}
+.tabbar{display:none}
+@media (max-width:860px){
+  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto}
+  .side{display:none}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
+  .topbar .brand{padding:0;font-size:1.15rem}
+  .topbar .seg{width:210px}
+  .main{padding:16px 16px 24px}
+  h1{font-size:1.55rem}
+  .tabbar{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);margin:6px 8px calc(8px + env(safe-area-inset-bottom,0px));padding:6px 2px}
+  .tabbar button{border:0;background:none;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:.58rem;line-height:1.1;font-weight:600;color:var(--muted);padding:6px 0;border-radius:12px;cursor:pointer;min-width:0}
+  .tabbar button span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tabbar button svg{width:23px;height:23px}
+  .tabbar button:nth-child(1) svg,.tabbar button:nth-child(7) svg{color:var(--blue)}
+  .tabbar button:nth-child(2) svg,.tabbar button:nth-child(6) svg{color:var(--accent)}
+  .tabbar button:nth-child(3) svg,.tabbar button:nth-child(8) svg{color:var(--prace)}
+  .tabbar button:nth-child(4) svg,.tabbar button:nth-child(9) svg{color:var(--warn)}
+  .tabbar button:nth-child(5) svg{color:var(--osobni)}
+  .tabbar button[aria-current="page"]{color:var(--ink);background:var(--accent-soft)}
+  .day{min-height:54px;padding:4px}
+  .day .nm{display:none}
+  .hab{grid-template-columns:minmax(70px,1.2fr) repeat(7,minmax(26px,1fr)) 30px;gap:4px}
+  .cat{grid-template-columns:80px 1fr auto}
+}
+@media (prefers-reduced-motion:no-preference){.btn,.chip,.day,.nav button{transition:background .15s,border-color .15s}}
+</style>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><i id="brandIcon"></i>Můj diář</div>
+    <div class="seg" id="scopeTop" role="group" aria-label="Zobrazit"></div>
+  </header>
+  <aside class="side">
+    <div class="brand"><i id="brandIcon2"></i>Můj diář</div>
+    <nav class="nav" id="nav" aria-label="Moduly"></nav>
+    <div class="foot">
+      <div class="seg" id="scopeSide" role="group" aria-label="Zobrazit"></div>
+      <button class="themebtn" id="themeBtn" type="button">Světlý / tmavý režim</button>
+      <div class="status" id="status"><span class="dot off"></span><span>Načítám…</span></div>
+    </div>
+  </aside>
+  <main class="main" id="main"></main>
+  <nav class="tabbar" id="tabbar" aria-label="Hlavní moduly"></nav>
+</div>
+
+<script>
+(function(){
+'use strict';
+/* ---------- data: Czech name days (CZ calendar), generated from the package "namedays" ---------- */
+var NAMES = ["Mečislav|Karina|Radmila|Diana|Dalimil|Kašpar / Melichar a Baltazar (Tři králové)|Vilma|Čestmír|Vladan|Břetislav|Bohdana|Pravoslav|Edita|Radovan|Alice|Ctirad|Drahoslav|Vladislav|Doubravka|Ilona a Sebastian|Běla|Slavomír|Zdeněk|Milena|Miloš|Zora|Ingrid|Otýlie|Zdislava|Robin|Marika","Hynek a Jasmína|Nela|Blažej|Jarmila|Dobromila|Vanda|Veronika|Milada|Apolena|Mojmír|Božena|Slavěna|Věnceslav|Valentýn|Jiřina|Ljuba|Miloslava|Gizela|Patrik|Oldřich|Lenka a Eleonora|Petr|Svatopluk|Matěj a Matyáš|Liliana|Dorota a Božetěch|Alexandr|Lumír|Horymír","Bedřich a Bedřiška|Anežka|Kamil|Stela|Kazimír|Miroslav|Tomáš|Gabriela|Františka|Viktorie|Anděla a Angelika|Řehoř|Růžena|Matylda / Rút a Vlastibor|Ida|Elena a Herbert|Vlastimil|Eduard|Josef|Světlana|Radek|Leona a Lea|Ivona|Gabriel|Marián|Emanuel|Dita|Soňa|Taťána|Arnošt|Kvido","Hugo|Erika|Richard|Ivana|Miroslava|Vendula a Venuše|Hermína|Ema|Dušan a Dušana|Darja|Izabela|Julius|Aleš|Vincenc|Anastázie|Irena|Rudolf|Valérie|Rostislav|Marcela|Alexandra|Evžénie|Vojtěch|Jiří|Marek|Oto|Jaroslav|Vlastislav|Robert|Blahoslav","Pamela a Jeremiáš|Zikmund|Alexej|Květoslav|Klaudie|Radoslav|Stanislav|Zlatan|Ctibor|Blažena|Svatava|Pankrác|Servác|Bonifác|Žofie a Sofie|Přemysl|Aneta|Nataša|Ivo|Zbyšek|Monika|Emil|Vladimír|Jana a Vanesa|Viola|Filip|Valdemar|Vilém|Maxim|Ferdinand|Kamila","Laura|Jarmil|Tamara a Kevin|Dalibor|Dobroslav|Norbert|Iveta|Medard|Stanislava|Gita a Margita|Bruno|Antonie a Táňa|Antonín|Roland|Vít|Zbyněk|Adolf|Milan|Leoš a Leo|Květa a Květuše|Alois a Aloisie|Pavla|Zdeňka|Jan|Ivan|Adriana a Adrian|Ladislav|Lubomír|Petr a Pavel|Šárka","Jaroslava|Patricie|Radomír|Prokop|Cyril a Metoděj|Spytihněv|Bohuslava|Nora|Drahoslava a Drahuše|Libuše a Amálie|Olga a Helga|Bořek|Markéta|Karolína|Jindřich|Luboš|Martina|Drahomíra|Čeněk|Eliáš a Ilja|Vítězslav|Magdaléna|Libor|Kristýna|Jakub|Anna a Anita|Věroslav|Viktor a Alina|Marta|Bořivoj|Ignác a Elin","Oskar|Gustav|Miluše|Dominik a Dominika|Kristián|Oldřiška|Lada|Soběslav|Roman|Vavřinec|Zuzana|Klára|Alena|Alan|Hana|Jáchym|Petra|Helena a Jelena|Ludvík|Bernard|Johana a Jovana|Bohuslav|Sandra|Bartoloměj|Radim|Luděk|Otakar|Augustýn|Evelína|Vladěna|Pavlína","Linda a Samuel|Adéla|Bronislav a Bronislava|Jindřiška a Rozálie|Boris|Boleslav|Regína|Mariana|Daniela|Irma|Denisa a Denis|Marie a Mia|Lubor|Radka|Jolana|Ludmila a Lola|Naděžda|Kryštof|Zita|Oleg|Matouš|Darina|Berta|Jaromír a Jaromíra|Zlata|Andrea|Jonáš|Václav a Václava|Michal a Michael|Jeroným","Igor|Olívie a Oliver|Bohumil|František|Eliška|Hanuš|Justýna|Věra|Sára a Štefan|Marina|Andrej|Marcel|Renáta|Agáta|Tereza|Havel|Hedvika|Lukáš|Michaela|Vendelín|Brigita|Sabina|Teodor|Nina|Beáta|Erik|Šarlota|Alfréd|Silvie|Tadeáš|Štěpánka","Felix|Tobiáš / ''Památka zesnulých''|Hubert|Karel a Karla|Miriam|Liběna|Saskie|Bohumír|Bohdan|Evžen|Martin|Benedikt|Tibor|Sáva|Leopold|Otmar|Mahulena|Romana|Alžběta|Nikola a Nikolas|Albert|Cecílie|Klement|Emílie|Kateřina|Artur|Xenie|René|Zina|Ondřej","Iva|Blanka|Svatoslav|Barbora|Jitka|Mikuláš|Ambrož|Květoslava|Vratislav a Vratislava|Julie|Dana a Danuše|Simona|Lucie|Lýdie|Radana|Albína|Daniel|Miloslav|Ester|Dagmar|Natálie|Šimon|Vlasta|Adam a Eva||Štěpán|Žaneta|Bohumila|Judita|David|Silvestr"];
+var NAMEDAYS = NAMES.map(function(m){return m.split('|');});
+NAMEDAYS[11][24] = '1. svátek vánoční';
+var NAMES_SK = ["|Alexandra, Sandra, Karina|Daniela|Drahoslav|Andrea, Artur|Antónia|Bohuslava, Atila|Severín|Alexej, Alex, Alexia|Daša|Malvína|Ernest, Ernestína|Rastislav|Radovan, Radovana|Dobroslav, Dobroslava|Kristína|Nataša|Bohdana|Mário, Sára, Zara|Dalibor, Sebastián, Fabián|Vincent|Zora, Zoran, Auróra|Miloš|Timotej, Timon, Tímea|Gejza|Tamara|Bohuš|Alfonz|Gašpar|Ema|Emil","Tatiana, Táňa|Erich, Erik, Erika|Blažej|Veronika|Agáta|Dorota|Vanda|Zoja|Zdeno, Zdenko, Ronald|Gabriela|Dezider|Perla|Arpád|Valentín|Pravoslav|Ida, Liana|Miloslava|Jaromír, Jaromíra|Vlasta|Lívia, Aladár|Eleonóra|Etela|Roman, Romana|Matej, Matiáš, Matias|Frederik, Frederika|Viktor|Alexander|Zlatica|Radomír","Albín|Anežka|Bohumil, Bohumila|Kazimír|Fridrich|Radoslav, Radoslava|Tomáš|Alan, Alana|Františka|Branislav, Bronislav, Bruno|Angela, Angelika|Gregor|Vlastimil, Letícia|Matilda|Svetlana|Boleslav|Ľubica|Eduard|Jozef|Víťazoslav|Blahoslav|Beňadik, Benedikt|Adrián|Gabriel|Marián|Emanuel|Alena|Soňa|Miroslav|Vieroslava|Benjamín","Hugo|Zita|Richard|Izidor|Miroslava|Irena|Zoltán|Albert|Milena|Igor|Július|Estera|Aleš|Justín, Justína|Fedor|Dana, Danica|Rudolf|Valér|Jela|Marcel|Ervín|Slavomír|Vojtech|Juraj|Marek, Marko, Markus|Jaroslava|Jaroslav|Jarmila|Leo, Lea|Anastázia","|Žigmund|Galina|Florián|Lesana, Lesia|Hermína|Monika|Ingrida|Roland|Viktória|Blažena|Pankrác|Servác|Bonifác|Žofia, Sofia|Svetozár|Gizela|Viola|Gertrúda|Bernard|Zina|Júlia, Juliána, Rita|Želmíra|Ela, Vanesa|Urban|Dušan|Iveta|Viliam|Vilma|Ferdinand|Petrana, Petronela, Nela","Žaneta|Oxana, Xénia|Karolína, Kevin|Lenka|Laura|Norbert|Róbert|Medard|Stanislava|Margaréta, Gréta|Jesika|Zlatko|Anton|Vasil|Vít|Bianka, Blanka|Adolf|Vratislav|Alfréd|Valéria|Alojz|Paulína, Paula, Pavla|Sidónia|Ján|Olívia, Tadeáš|Adriána|Ladislav, Ladislava|Beáta|Peter, Pavol, Petra|Melánia","Diana|Berta|Miloslav|Prokop|Cyril, Metod|Patrik, Patrícia|Oliver|Ivan|Lujza|Amália|Milota|Nina|Margita|Kamil, Lara|Henrich|Drahomír, Drahomíra|Bohuslav|Kamila|Šarlota, Dušana|Eliáš, Iľja, Eliána|Daniel|Magdaléna|Oľga|Vladimír|Jakub|Anna, Hana, Aneta|Božena|Krištof|Marta|Libuša|Ignác","Božidara|Gustáv|Jerguš|Dominik, Dominika|Hortenzia|Jozefína|Štefánia|Oskar|Ľubomíra|Vavrinec|Zuzana|Darina, Dárius, Dária|Ľubomír|Mojmír|Marcela|Leonard|Milica|Elena, Helena|Lýdia|Anabela, Bela|Jana, Johana, Noema|Tichomír|Filip|Bartolomej|Ľudovít|Samuel|Silvia|Augustín|Nikola, Nikolaj, Nikoleta|Ružena|Nora","Drahoslava|Linda, Rebeka|Belo|Rozália|Regína|Alica|Marianna|Miriama|Martina|Oleg|Bystrík|Mária, Mia|Ctibor, Tobiáš, Tobias|Ľudomil, Radka|Jolana|Ľudmila|Olympia, Melisa|Eugénia|Konštantín|Ľuboslav, Ľuboslava|Matúš|Móric|Zdenka|Ľubor, Ľuboš|Vladislav|Edita|Cyprián, Damián|Václav|Michal, Michael, Michaela|Jarolím","Arnold|Levoslav|Stela|František|Viera|Natália|Eliška, Elisa|Brigita|Dionýz|Slavomíra|Valentína|Maximilián, Maxim, Max|Koloman|Boris|Terézia, Tereza|Vladimíra|Hedviga|Lukáš|Kristián|Vendelín|Uršuľa|Sergej|Alojzia|Kvetoslava|Aurel|Demeter|Sabína|Dobromila|Klára, Kiara|Šimon, Simon, Simona|Aurélia","Denis, Denisa||Hubert|Karol|Imrich|Renáta|René|Bohumír|Teodor, Teo|Tibor|Martin, Maroš|Svätopluk, Jonáš|Stanislav|Irma|Leopold|Agnesa|Klaudia|Eugen|Alžbeta, Liliana|Félix|Elvíra|Cecília|Klement|Emília|Katarína|Kornel|Milan|Henrieta|Vratko|Andrej, Ondrej, Andreas","Edmund|Bibiána, Viviána|Oldrich|Barbora, Barbara|Oto|Mikuláš, Nikolas|Ambróz|Marína|Izabela|Radúz|Hilda|Otília|Lucia|Branislava, Bronislava|Ivica|Albína|Kornélia|Sláva, Slávka|Judita|Dagmara|Bohdan, Noel|Adela|Nadežda, Naďa|Adam, Eva||Štefan|Filoména|Ivana, Ivona|Milada, Nátan|Dávid|Silvester"];
+var NAMEDAYS_SK = NAMES_SK.map(function(m){return m.split('|');});
+var SHIFTS = [];
+var SHIFTS_URL = 'https://claude.ai/artifact/SyLJEUK2MgAgbmCRDwkLgm';
+
+var MONN=['Leden','Únor','Březen','Duben','Květen','Červen','Červenec','Srpen','Září','Říjen','Listopad','Prosinec'];
+var MONG=['ledna','února','března','dubna','května','června','července','srpna','září','října','listopadu','prosince'];
+var DOW=['Po','Út','St','Čt','Pá','So','Ne'];
+var DOWL=['Pondělí','Úterý','Středa','Čtvrtek','Pátek','Sobota','Neděle'];
+var MEALS=['Snídaně','Oběd','Svačina','Večeře'];
+var SECTIONS=['Ovoce a zelenina','Maso a ryby','Mléčné výrobky','Pečivo','Trvanlivé','Pití','Drogerie','Ostatní'];
+var FINCATS=['Bydlení','Jídlo','Doprava','Volný čas','Zdraví','Dárky','Cestování','Práce','Ostatní'];
+var SCOPES={osobni:'Osobní',prace:'Práce'};
+
+/* ---------- date helpers ---------- */
+function p2(n){return (n<10?'0':'')+n;}
+function iso(d){return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate());}
+function parse(s){var a=s.split('-');return new Date(+a[0],+a[1]-1,+a[2]);}
+function addDays(s,n){var d=parse(s);d.setDate(d.getDate()+n);return iso(d);}
+function dowOf(s){return (parse(s).getDay()+6)%7;}
+function mondayOf(s){return addDays(s,-dowOf(s));}
+function namedaySK(s){var d=parse(s);return (NAMEDAYS_SK[d.getMonth()][d.getDate()-1]||'').replace(/, /g,' / ');}
+function nameday(s){var d=parse(s);return NAMEDAYS[d.getMonth()][d.getDate()-1]||'';}
+function longDate(s){var d=parse(s);return DOWL[dowOf(s)]+' '+d.getDate()+'. '+MONG[d.getMonth()]+' '+d.getFullYear();}
+function shortDate(s){var d=parse(s);return d.getDate()+'. '+(d.getMonth()+1)+'.';}
+function easter(y){var a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),da=((h+l-7*m+114)%31)+1;return new Date(y,mo-1,da);}
+var holCache={};
+function holidays(y){
+  if(holCache[y])return holCache[y];
+  var h={};h[y+'-01-01']='Nový rok';h[y+'-05-01']='Svátek práce';h[y+'-05-08']='Den vítězství';h[y+'-07-05']='Cyril a Metoděj';h[y+'-07-06']='Jan Hus';h[y+'-09-28']='Den české státnosti';h[y+'-10-28']='Vznik Československa';h[y+'-11-17']='Den boje za svobodu';h[y+'-12-24']='Štědrý den';h[y+'-12-25']='1. svátek vánoční';h[y+'-12-26']='2. svátek vánoční';
+  var e=easter(y);var ee=iso(e);h[addDays(ee,-2)]='Velký pátek';h[addDays(ee,1)]='Velikonoční pondělí';
+  holCache[y]=h;return h;
+}
+function holiday(s){return holidays(+s.slice(0,4))[s]||'';}
+var holSK={};
+function holidaysSK(y){
+  if(holSK[y])return holSK[y];
+  var h={};h[y+'-01-01']='Deň vzniku SR';h[y+'-01-06']='Zjavenie Pána';h[y+'-05-01']='Sviatok práce';h[y+'-05-08']='Deň víťazstva nad fašizmom';h[y+'-07-05']='Cyril a Metod';h[y+'-08-29']='Výročie SNP';h[y+'-09-01']='Deň Ústavy SR';h[y+'-09-15']='Sedembolestná Panna Mária';h[y+'-11-01']='Sviatok všetkých svätých';h[y+'-11-17']='Deň boja za slobodu a demokraciu';h[y+'-12-24']='Štedrý deň';h[y+'-12-25']='1. sviatok vianočný';h[y+'-12-26']='2. sviatok vianočný';
+  var e=iso(easter(y));h[addDays(e,-2)]='Veľký piatok';h[addDays(e,1)]='Veľkonočný pondelok';
+  holSK[y]=h;return h;
+}
+function holidaySK(s){return holidaysSK(+s.slice(0,4))[s]||'';}
+/* Slovak holiday only when it is not also a Czech one on the same day */
+function holSkOnly(s){return holiday(s)?'':holidaySK(s);}
+var TODAY=iso(new Date());
+
+/* ---------- icons ---------- */
+var IC={
+  home:'<path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/>',
+  cal:'<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  task:'<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8 12l3 3 5-6"/>',
+  cart:'<path d="M3 4h3l2.5 11h9L20 8H7"/><circle cx="10" cy="19.5" r="1.4"/><circle cx="17" cy="19.5" r="1.4"/>',
+  meal:'<path d="M7 3v8a2 2 0 002 2v8M11 3v8a2 2 0 01-2 2M17 3c-2 2-3 5-3 8h3v10"/>',
+  goal:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/>',
+  note:'<path d="M6 3h9l4 4v14H6z"/><path d="M9 11h7M9 15h7"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  coin:'<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/>',
+  book:'<path d="M4 5a2 2 0 012-2h13v15H6a2 2 0 00-2 2z"/><path d="M4 20a2 2 0 002 2h13v-4M9 7h6"/>',
+  dumbbell:'<path d="M6.5 6.5v11M17.5 6.5v11M3.5 9v6M20.5 9v6M6.5 12h11"/>',
+  more:'<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
+  x:'<path d="M6 6l12 12M18 6L6 18"/>'
+};
+function icon(n){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+IC[n]+'</svg>';}
+
+var TABS=[['home','Domů','home'],['plan','Diář','book'],['cal','Kalendář','cal'],['tasks','Úkoly','task'],['shop','Nákupy','cart'],['meals','Jídelníček','meal'],['train','Cvičení','dumbbell'],['notes','Poznámky','note'],['sched','Rozvrh','clock']];
+var MOBILE=['home','cal','tasks','shop','meals','train','notes','sched'];
+var SHORT={home:'Domů',cal:'Kalendář',tasks:'Úkoly',shop:'Nákupy',meals:'Jídlo',train:'Cvičení',notes:'Poznámky',sched:'Rozvrh'};
+
+/* ---------- state & storage ---------- */
+var KEYS=['events','tasks','shop','meals','goals','habits','notes','sched','fin','meta'];
+var LS='diar.v1.';
+var S={},hasLS={};
+function empty(k){return k==='meals'?{}:k==='meta'?{imp:[]}:k==='habits'?{list:[],log:{}}:[];}
+function lsGet(k){try{var v=localStorage.getItem(LS+k);return v?JSON.parse(v):null;}catch(e){return null;}}
+function lsSet(k,v){try{localStorage.setItem(LS+k,JSON.stringify(v));}catch(e){}}
+KEYS.forEach(function(k){var v=lsGet(k);hasLS[k]=v!==null;S[k]=v!==null?v:empty(k);});
+var UI={bf:false,bfMsg:'',bfErr:'',pgi:0,toast:'',toastT:0,dayOpen:false,focusOpen:false,ruMsg:'',lastCol:{},trMsg:'',tab:'home',cm:TODAY.slice(0,7),sel:TODAY,taskF:'open',mealW:mondayOf(TODAY),habW:mondayOf(TODAY),finM:TODAY.slice(0,7),noteQ:'',scope:'all',cv:'month'};
+try{var sc=localStorage.getItem('diar.scope');if(sc)UI.scope=sc;var cvv=localStorage.getItem('diar.cv');if(cvv)UI.cv=cvv;var tb=location.hash.replace('#','');if(tb&&TABS.some(function(t){return t[0]===tb;})||tb==='more')UI.tab=tb;}catch(e){}
+
+try{UI.lastCol=JSON.parse(localStorage.getItem('diar.col')||'{}')||{};}catch(e){UI.lastCol={};}
+function uid(){return Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-3);}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function inScope(x){return UI.scope==='all'||x.scope===UI.scope;}
+function defScope(){return UI.scope==='all'?'osobni':UI.scope;}
+function pill(sc){return sc?'<span class="pill '+sc+'">'+SCOPES[sc]+'</span>':'';}
+function scopeSelect(id,val){return '<select id="'+id+'" aria-label="Osobní nebo práce"><option value="osobni"'+(val==='osobni'?' selected':'')+'>Osobní</option><option value="prace"'+(val==='prace'?' selected':'')+'>Práce</option></select>';}
+function money(n){return new Intl.NumberFormat('cs-CZ',{maximumFractionDigits:0}).format(Math.round(n))+' Kč';}
+
+/* ---------- sync with the shared store ---------- */
+var db=null,col=null,pend={},timers={},chain={},syncState='local',ready=false;
+function setStatus(){
+  var el=document.getElementById('status');if(!el)return;
+  var map={sync:['Synchronizováno mezi zařízeními',''],local:['Uloženo jen v tomto zařízení','off'],err:['Ukládání se nepovedlo, zkusím znovu','off'],load:['Načítám…','off']};
+  var m=map[syncState]||map.load;el.innerHTML='<span class="dot '+m[1]+'"></span><span>'+m[0]+'</span>';
+}
+function save(k){
+  lsSet(k,S[k]);
+  if(!col){return;}
+  pend[k]=(pend[k]||0)+1;
+  clearTimeout(timers[k]);
+  timers[k]=setTimeout(function(){
+    chain[k]=(chain[k]||Promise.resolve()).then(function(){return col.doc(k).set({v:JSON.parse(JSON.stringify(S[k]))});}).then(function(){syncState='sync';setStatus();},function(){syncState='err';setStatus();}).then(function(){pend[k]=Math.max(0,(pend[k]||1)-1);});
+  },350);
+}
+function typing(){var a=document.activeElement;return a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)&&document.getElementById('main').contains(a);}
+var dirtyRender=false;
+function connect(){
+  var cl=window.claude;
+  if(!cl||!cl.use){startLocal();return;}
+  Promise.all([cl.use('db'),cl.use('user')]).then(function(r){
+    db=r[0];var u=r[1];
+    if(!db||!u){startLocal();return;}
+    return u.id().then(function(id){
+      if(!id){db=null;startLocal();return;}
+      col=db.collection('data/users/'+id);
+      var first=true;
+      col.onSnapshot(function(snap){
+        var present={};
+        snap.docs.forEach(function(d){
+          present[d.id]=1;
+          if(KEYS.indexOf(d.id)<0||pend[d.id]>0||d.metadata.hasPendingWrites)return;
+          var b=d.data();if(!b||b.v==null)return;
+          S[d.id]=JSON.parse(JSON.stringify(b.v));lsSet(d.id,S[d.id]);hasLS[d.id]=true;
+        });
+        if(first){
+          first=false;
+          KEYS.forEach(function(k){if(!present[k]){if(!hasLS[k]){S[k]=seed(k);hasLS[k]=true;}save(k);}});
+          mergeShifts();
+        }
+        syncState='sync';ready=true;setStatus();
+        if(typing()){dirtyRender=true;}else{render();}
+      },function(){syncState='local';setStatus();startLocal(true);});
+    });
+  }).catch(function(){startLocal();});
+}
+function startLocal(again){
+  if(!again){KEYS.forEach(function(k){if(!hasLS[k]){S[k]=seed(k);hasLS[k]=true;lsSet(k,S[k]);}});mergeShifts();}
+  col=null;syncState='local';ready=true;setStatus();render();
+}
+
+/* ---------- example data (marked ex:true, removable) ---------- */
+function seed(k){
+  var t=TODAY;
+  if(k==='events')return [
+    {id:uid(),ex:1,date:addDays(t,1),time:'10:00',title:'Porada týmu',scope:'prace'},
+    {id:uid(),ex:1,date:addDays(t,3),time:'19:00',title:'Večeře s přáteli',scope:'osobni'},
+    {id:uid(),ex:1,date:addDays(t,6),time:'',title:'Objednávka od dodavatele',scope:'prace'}];
+  if(k==='tasks')return [
+    {id:uid(),ex:1,title:'Zkontrolovat zásoby baru',due:t,done:false,scope:'prace'},
+    {id:uid(),ex:1,title:'Koupit dárek',due:addDays(t,4),done:false,scope:'osobni'},
+    {id:uid(),ex:1,title:'Zavolat dodavateli',due:addDays(t,-1),done:false,scope:'prace'}];
+  if(k==='shop')return [
+    {id:uid(),ex:1,name:'Jablka',sec:'Ovoce a zelenina',done:false},
+    {id:uid(),ex:1,name:'Mléko',sec:'Mléčné výrobky',done:false},
+    {id:uid(),ex:1,name:'Chléb',sec:'Pečivo',done:true},
+    {id:uid(),ex:1,name:'Toaletní papír',sec:'Drogerie',done:false}];
+  if(k==='goals')return [{id:uid(),ex:1,title:'Být zdravější',steps:[{t:'Cvičit 3× týdně',d:true},{t:'Pít víc vody',d:false},{t:'Spát 8 hodin',d:false}]}];
+  if(k==='habits'){var a=uid(),b=uid(),c=uid();return {list:[{id:a,name:'Cvičení',ex:1},{id:b,name:'Voda',ex:1},{id:c,name:'Čtení',ex:1}],log:{}};}
+  if(k==='notes')return [{id:uid(),ex:1,title:'Nápady na menu',text:'Sezónní drink, nová nealko nabídka, úprava cen.',scope:'prace',pin:true,at:t}];
+  if(k==='sched')return [
+    {id:uid(),ex:1,day:0,from:'09:00',to:'12:00',title:'Administrativa',scope:'prace'},
+    {id:uid(),ex:1,day:2,from:'18:00',to:'19:30',title:'Cvičení',scope:'osobni'}];
+  if(k==='fin')return [
+    {id:uid(),ex:1,date:t,type:'in',amount:28000,cat:'Práce',note:'Výplata',scope:'osobni'},
+    {id:uid(),ex:1,date:t,type:'out',amount:7500,cat:'Bydlení',note:'Nájem',scope:'osobni'}];
+  return empty(k);
+}
+function hasExamples(){
+  var f=function(a){return a.some(function(x){return x.ex;});};
+  return f(S.events)||f(S.tasks)||f(S.shop)||f(S.goals)||f(S.notes)||f(S.sched)||f(S.fin)||f(S.habits.list);
+}
+function clearExamples(){
+  ['events','tasks','shop','goals','notes','sched','fin'].forEach(function(k){S[k]=S[k].filter(function(x){return !x.ex;});save(k);});
+  S.habits.list=S.habits.list.filter(function(x){return !x.ex;});save('habits');render();
+}
+
+/* ---------- views ---------- */
+function dateLine(){var d=(UI.tab==='plan'||UI.tab==='cal')?UI.sel:TODAY;return '<p class="dateline"><b>'+esc(longDate(d))+'</b> · '+dayLine(d)+'</p>';}
+function head(title,sub,right){return '<div class="head"><div><h1>'+title+'</h1>'+(UI.tab==='home'?'':dateLine())+(sub?'<p class="muted">'+sub+'</p>':'')+'</div>'+(right||'')+'</div>';}
+function emptyMsg(t){return '<div class="empty">'+t+'</div>';}
+
+function taskRow(t){
+  var late=!t.done&&t.due&&t.due<TODAY;
+  return '<li class="row"><input class="chk" type="checkbox" data-change="taskDone" data-id="'+t.id+'"'+(t.done?' checked':'')+' aria-label="Hotovo">'+dotOf(t)+'<span class="t'+(t.done?' done':'')+'">'+esc(t.title)+'</span><span class="acts">'+pill(t.scope)+(t.due?'<span class="when tnum'+(late?' late':'')+'">'+(t.due===TODAY?'dnes':shortDate(t.due))+(t.time?' '+t.time:'')+'</span>':'')+'<button class="ibtn" data-act="taskDel" data-id="'+t.id+'" aria-label="Smazat úkol">'+icon('x').replace('<svg','<svg width="16" height="16"')+'</button></span></li>';
+}
+function showNames(){return UI.scope!=='prace';}
+var G={by:{},min:'',max:'',state:'idle',err:'',n:0,busy:false,fail:false,force:false};
+function evTimeLabel(e){if(e.allDay||!e.time)return 'celý den';return e.time+(e.end?'–'+e.end:'');}
+function evPill(e){return e.src==='train'?'<span class="pill g">Cvičení</span>':e.src==='shift'?'<span class="pill prace">Směna</span>':e.src==='google'?'<span class="pill g">Google</span>':pill(e.scope);}
+function shiftTitle(s){var t=(s.title||'').trim();if(s.place==='tyn')return 'Týnská'+(t?' · '+t:'');if(s.place==='nar')return 'Národní'+(t?' · '+t:'');if(s.place==='off')return 'Office'+(t?' · '+t:'');return t||'Jinde';}
+function mergeShifts(){
+  if(!S.meta||!S.meta.imp)S.meta={imp:[]};
+  var imp=S.meta.imp,add=0;
+  SHIFTS.forEach(function(s){
+    if(imp.indexOf(s.id)>=0)return;
+    imp.push(s.id);add++;
+    S.events.push({id:'sh-'+s.id,date:s.date,time:s.start,end:s.end,title:shiftTitle(s),scope:'prace',src:'shift'});
+  });
+  if(add){save('events');save('meta');}
+}
+var REPS=[['','Neopakovat'],['d','Každý den'],['w','Každý týden'],['m','Každý měsíc'],['y','Každý rok']];
+function repFields(p){return '<select id="'+p+'R" aria-label="Opakování">'+REPS.map(function(r){return '<option value="'+r[0]+'">'+r[1]+'</option>';}).join('')+'</select><label class="small muted" style="display:flex;gap:6px;align-items:center" title="Prázdné = automaticky: den 3 měsíce, týden 1 rok, měsíc 2 roky, rok 5 let">opakovat do <input type="date" id="'+p+'U" aria-label="Opakovat do"></label>';}
+function addMonths(s,n){var a=s.split('-'),y=+a[0],m=+a[1]-1+n,dd=+a[2];var yy=y+Math.floor(m/12),mm=((m%12)+12)%12;var last=new Date(yy,mm+1,0).getDate();return yy+'-'+p2(mm+1)+'-'+p2(Math.min(dd,last));}
+function expandDates(d,rep,until){
+  if(!rep)return [d];
+  var lim=until||(rep==='d'?addDays(d,90):rep==='w'?addDays(d,364):rep==='m'?addMonths(d,24):addMonths(d,60));
+  var out=[d],i=1;
+  while(out.length<400){var n=rep==='d'?addDays(d,i):rep==='w'?addDays(d,7*i):rep==='m'?addMonths(d,i):addMonths(d,12*i);if(n>lim)break;out.push(n);i++;}
+  return out;
+}
+function addSeries(base,rep,until){
+  var ds=expandDates(base.date,rep,until),ser=ds.length>1?uid():'',made=[];
+  ds.forEach(function(d){var e={};for(var k in base)e[k]=base[k];e.id=uid();e.date=d;if(ser)e.ser=ser;S.events.push(e);made.push(e);});
+  return made;
+}
+function toast(m){UI.toast=m;clearTimeout(UI.toastT);UI.toastT=setTimeout(function(){UI.toast='';if(!typing())render();},7000);if(!typing())render();}
+function chk(id){var e=document.getElementById(id);return !!(e&&e.checked);}
+function gDelete(id){
+  if(!(window.claude&&window.claude.use))return;
+  window.claude.use('mcp').then(function(m){if(!m)return;return m.callTool('Google Calendar','delete_event',{eventId:id});}).then(function(){UI.trMsg='Smazáno i z Google Kalendáře.';G.min='';G.max='';toast('Smazáno i z Google Kalendáře.');}).catch(function(){UI.trMsg='Z diáře je smazané, z Google Kalendáře se nepodařilo smazat. Smaž to tam ručně.';toast(UI.trMsg);});
+}
+var COLORS=[['','Výchozí'],['#7A5CE0','Fialová'],['#2F6FD6','Modrá'],['#17866A','Zelená'],['#E0A21B','Žlutá'],['#E07B1F','Oranžová'],['#D9453F','Červená'],['#D6457F','Růžová']];
+function safeCol(c){return /^#[0-9a-fA-F]{6}$/.test(c||'')?c:'';}
+function swatchFields(name,noDef){
+  var cur=UI.lastCol[name]||'';
+  return '<span class="swatches" role="radiogroup" aria-label="Barva">'+COLORS.filter(function(c){return !(noDef&&!c[0]);}).map(function(c){return '<label class="sw'+(c[0]?'':' def')+'" title="'+c[1]+'"><input type="radio" name="'+name+'" value="'+c[0]+'"'+(c[0]===cur?' checked':'')+' aria-label="'+c[1]+'"><i'+(c[0]?' style="background:'+c[0]+'"':'')+'></i></label>';}).join('')+'</span>';
+}
+function colVal(name){var el=document.querySelector('input[name="'+name+'"]:checked');var v=el?el.value:'';UI.lastCol[name]=v;try{localStorage.setItem('diar.col',JSON.stringify(UI.lastCol));}catch(e){}return safeCol(v);}
+var DEFAULT_RULES=[{k:'bylink',c:'#17866A'},{k:'doutník',c:'#17866A'},{k:'JIP',c:'#E07B1F'}];
+function getRules(){return (S.meta&&S.meta.rules)||DEFAULT_RULES;}
+function normTxt(s){return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();}
+function ruleCol(title){
+  var n=normTxt(title),rs=getRules();
+  for(var i=0;i<rs.length;i++){
+    var k=normTxt(rs[i].k).trim();if(!k)continue;
+    var re=new RegExp('(^|[^a-z0-9])'+k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
+    if(re.test(n))return safeCol(rs[i].c);
+  }
+  return '';
+}
+function effCol(e){if(e.src==='shift')return '';return safeCol(e.color)||ruleCol(e.title);}
+function rulesCard(){
+  var rs=getRules();
+  return '<div class="card"><div class="ch"><h2>Barvy podle názvu</h2></div><div class="muted small" style="margin-bottom:8px">Událost nebo úkol, jehož název obsahuje dané slovo, se obarví sám. Barva vybraná přímo u události má přednost. Směny mají vždy svoji barvu.</div>'
+    +(rs.length?'<ul class="list">'+rs.map(function(r,i){return '<li class="row"><span class="cdot" style="background:'+safeCol(r.c)+'"></span><span class="t">'+esc(r.k)+'</span><button class="ibtn" data-act="ruleDel" data-i="'+i+'" aria-label="Smazat pravidlo">'+icon('x').replace('<svg','<svg width="16" height="16"')+'</button></li>';}).join('')+'</ul>':'<div class="muted small">Zatím žádné pravidlo.</div>')
+    +'<form class="form" data-form="addRule" style="margin-top:10px"><input class="grow" type="text" id="ruK" placeholder="Slovo v názvu, například bylinky" aria-label="Slovo v názvu" required>'+swatchFields('ruC',true)+'<button class="btn pri" type="submit">Přidat pravidlo</button></form>'+(UI.ruMsg?'<div class="small muted" style="margin-top:6px">'+esc(UI.ruMsg)+'</div>':'')+'</div>';
+}
+function cs(e){var c=effCol(e);return c?' style="border-color:'+c+'"':'';}
+function ci(e){var c=effCol(e);return c?' style="background:'+c+'"':'';}
+function dotOf(e){var c=effCol(e);return c?'<span class="cdot" style="background:'+c+'"></span>':'';}
+function dayPreview(){
+  var d=UI.sel,ev=eventsOn(d),tk=S.tasks.filter(function(x){return x.due===d&&inScope(x);});
+  var body=(ev.length?'<ul class="list">'+ev.map(evRow).join('')+'</ul>':'')+(tk.length?'<div class="sect">Úkoly</div><ul class="list">'+tk.map(taskRow).join('')+'</ul>':'');
+  return '<div class="card"><div class="ch"><h2>'+esc(longDate(d))+'</h2><button class="btn sm pri" data-act="dayOpen">Přidat</button></div><div style="margin-bottom:10px">'+dayLine(d)+'</div>'+(body||'<div class="muted small">V tento den zatím nic není.</div>')+'<div class="muted small" style="margin-top:8px">Dvojklik na den otevře okno pro přidávání.</div></div>';
+}
+function dayModal(){
+  var d=UI.sel,ev=eventsOn(d),tk=S.tasks.filter(function(x){return x.due===d&&inScope(x);});
+  return '<div class="modal"><div class="backdrop" data-act="dayClose"></div><div class="panel" role="dialog" aria-modal="true" aria-label="Detail dne">'
+    +'<div class="pgh"><h2>'+esc(longDate(d))+'</h2><div class="mnav"><button class="btn sm" data-act="dayNav" data-n="-1" aria-label="Předchozí den">‹</button><button class="btn sm" data-act="dayNav" data-n="1" aria-label="Další den">›</button><button class="btn sm" data-act="dayClose" aria-label="Zavřít">'+icon('x').replace('<svg','<svg width="16" height="16"')+'</button></div></div>'
+    +'<div>'+dayLine(d)+'</div>'
+    +'<div class="sect">Události</div>'+(ev.length?'<ul class="list">'+ev.map(evRow).join('')+'</ul>':'<div class="muted small">V tento den zatím nic není.</div>')
+    +'<div class="sect">Úkoly</div>'+(tk.length?'<ul class="list">'+tk.map(taskRow).join('')+'</ul>':'')
+    +'<form class="form" data-form="dayTask"><input class="grow" type="text" id="dtT" placeholder="Nový úkol na tento den" aria-label="Nový úkol" required>'+timeInput('dtH','','Čas úkolu')+swatchFields('dtC')+'<label class="small muted" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="dtG" checked> S časem zapsat do Google Kalendáře a upozornit</label><button class="btn pri" type="submit">Přidat úkol</button></form>'
+    +'<div class="sect">Nová událost</div>'+evForms()
+    +'</div></div>';
+}
+function sameEv(x,g){return x.date===g.date&&((x.gid&&x.gid===g.gid)||(x.title===g.title&&(x.time||'')===(g.time||'')));}
+function notMine(g){return !S.events.some(function(x){return x.src!=='google'&&sameEv(x,g);})&&!S.tasks.some(function(x){return x.time&&sameEv(x,g);});}
+function pragueOff(d,tm){
+  try{var a=d.split('-'),b=tm.split(':');var u=new Date(Date.UTC(+a[0],+a[1]-1,+a[2],+b[0],+b[1]));
+  var parts=new Intl.DateTimeFormat('en-US',{timeZone:'Europe/Prague',timeZoneName:'longOffset'}).formatToParts(u);
+  var z=parts.filter(function(p){return p.type==='timeZoneName';})[0].value;var m=z.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+  if(m)return m[1]+p2(+m[2])+':'+(m[3]||'00');}catch(e){}
+  return '';
+}
+function gErr(e){var c=e&&e.code;return (c==='not_in_manifest'||c==='consent_required')?'Zápis do Google Kalendáře není povolený. Zapni v Google Cloud Calendar API.':(c==='server_not_connected'||c==='needs_reauth'||c==='selection_required')?'Google Kalendář je odpojený. Klepni nahoře na Připojit.':'Do Google Kalendáře se nepodařilo zapsat.';}
+function gPayload(r){var p=r&&r.payload;if(typeof p==='string'){try{p=JSON.parse(p);}catch(e){p=null;}}return p||{};}
+function unsentEv(){return S.events.filter(function(e){return e.src!=='google'&&e.g!=='ok'&&!e.ex&&e.date>=TODAY&&e.title;});}
+function gBackfill(){
+  var cl=window.claude;if(!cl||!cl.use){toast('Do Google Kalendáře se zapíše jen v diáři otevřeném na claude.ai.');return;}
+  if(UI.bf)return;var all=unsentEv();if(!all.length)return;
+  var done=0,fail=0,skip=0;UI.bf=true;UI.bfMsg='Zapisuju do Google Kalendáře…';render();
+  cl.use('mcp').then(function(m){
+    if(!m){var er=new Error('x');er.code='server_not_connected';throw er;}
+    var seen={},jobs=[];
+    all.forEach(function(ev){if(!ev.ser){jobs.push({ev:ev,grp:[ev]});return;}if(seen[ev.ser]){seen[ev.ser].grp.push(ev);return;}var j={ev:ev,grp:[ev]};seen[ev.ser]=j;jobs.push(j);});
+    jobs.forEach(function(j){if(j.grp.length<2)return;j.grp.sort(function(a,b){return a.date<b.date?-1:1;});j.ev=j.grp[0];var dd=Math.round((parse(j.grp[1].date)-parse(j.grp[0].date))/864e5);j.rep=dd===1?'DAILY':dd===7?'WEEKLY':(dd>=28&&dd<=31)?'MONTHLY':(dd===365||dd===366)?'YEARLY':'';if(!j.rep){j.grp.slice(1).forEach(function(x){jobs.push({ev:x,grp:[x]});});j.grp=[j.ev];}});
+    return jobs.reduce(function(p,job){return p.then(function(){
+      var ev=job.ev;if(fail>=3)return;
+      var dup=(G.by[ev.date]||[]).some(function(g){return g.title===ev.title&&(g.time||'')===(ev.time||'');});
+      if(dup){job.grp.forEach(function(x){x.g='ok';});skip++;return;}
+      var inp;
+      if(ev.time){var off=pragueOff(ev.date,ev.time),endT=ev.end||addHour(ev.time),endD=endT<=ev.time?addDays(ev.date,1):ev.date;
+        inp={summary:ev.title,startTime:ev.date+'T'+ev.time+':00'+off,endTime:endD+'T'+endT+':00'+pragueOff(endD,endT),timeZone:'Europe/Prague',useDefaultReminders:false,overrideReminders:[{method:'popup',minutes:30}]};}
+      else{var nx=addDays(ev.date,1);inp={summary:ev.title,startTime:ev.date+'T00:00:00Z',endTime:nx+'T00:00:00Z',allDay:true};}
+      if(job.rep&&job.grp.length>1)inp.recurrenceData=['RRULE:FREQ='+job.rep+';COUNT='+job.grp.length];
+      return m.callTool('Google Calendar','create_event',inp).then(function(r){var q=gPayload(r);var gid=q.id||(q.event&&q.event.id)||q.eventId||'';job.grp.forEach(function(x){x.gid=gid;x.g='ok';});done++;if(done%5===0)save('events');}).catch(function(e){fail++;if(fail===1)UI.bfErr=gErr(e);});
+    });},Promise.resolve());
+  }).catch(function(e){UI.bfErr=gErr(e);fail=99;}).then(function(){
+    UI.bf=false;UI.bfMsg='';save('events');G.min='';G.max='';
+    var msg='Zapsáno do Google Kalendáře: '+done+(skip?' (už tam bylo: '+skip+')':'')+(fail?'. Nepodařilo se: '+(fail>=99?'zbytek':fail)+'. '+(UI.bfErr||''):'.');
+    toast(msg);render();
+  });
+}
+function gSendAll(list,rep){
+  var cl=window.claude;
+  if(!cl||!cl.use){toast('Do Google Kalendáře se zapíše jen v diáři otevřeném na claude.ai, upozornění tedy nepřijde.');return;}
+  UI.trMsg='Zapisuju do Google Kalendáře…';
+  var ok=0,todo=list.length>1?[list[0]]:list,timed=!!list[0].time;
+  cl.use('mcp').then(function(m){
+    if(!m){var er=new Error('x');er.code='server_not_connected';throw er;}
+    return todo.reduce(function(p,ev){return p.then(function(){
+      var inp;
+      if(ev.time){
+        var off=pragueOff(ev.date,ev.time),endT=ev.end||addHour(ev.time),endD=endT<=ev.time?addDays(ev.date,1):ev.date;
+        inp={summary:ev.title,startTime:ev.date+'T'+ev.time+':00'+off,endTime:endD+'T'+endT+':00'+pragueOff(endD,endT),timeZone:'Europe/Prague',useDefaultReminders:false,overrideReminders:[{method:'popup',minutes:30}]};
+      }else{
+        var nx=addDays(ev.date,1);
+        inp={summary:ev.title,startTime:ev.date+'T00:00:00Z',endTime:nx+'T00:00:00Z',allDay:true};
+      }
+      if(list.length>1&&rep)inp.recurrenceData=['RRULE:FREQ='+({d:'DAILY',w:'WEEKLY',m:'MONTHLY',y:'YEARLY'}[rep])+';COUNT='+list.length];
+      return m.callTool('Google Calendar','create_event',inp).then(function(r){var q=gPayload(r);ev.gid=q.id||(q.event&&q.event.id)||q.eventId||'';ev.g='ok';ok++;if(list.length>1)list.forEach(function(x){x.gid=ev.gid;x.g='ok';});});
+    });},Promise.resolve());
+  }).then(function(){
+    var msg=(list.length>1&&ok?'Zapsáno do Google Kalendáře jako opakovaná událost ('+list.length+'×)':'Zapsáno do Google Kalendáře')+(timed?', upozorní tě 30 minut předem.':', celodenní události bez upozornění.');
+    UI.trMsg=msg;toast(msg);
+  }).catch(function(e){UI.trMsg=gErr(e)+(ok?' Zapsáno '+ok+'×.':'');toast(UI.trMsg);}).then(function(){save('tasks');save('events');if(!typing())render();});
+}
+function addHour(tm){var b=tm.split(':');return p2((+b[0]+1)%24)+':'+b[1];}
+function eventsOn(d){
+  var l=S.events.filter(function(e){return e.date===d&&inScope(e);}).concat((G.by[d]||[]).filter(inScope).filter(notMine));
+  return l.sort(function(a,b){var ka=(a.allDay||!a.time)?'':a.time,kb=(b.allDay||!b.time)?'':b.time;return ka.localeCompare(kb);});
+}
+function zIso(s,plus){var d=parse(s);d.setDate(d.getDate()+plus);return d.toISOString();}
+function needGoogle(from,to){
+  if(UI.scope==='prace'||G.busy||G.fail)return;
+  if(G.min&&from>=G.min&&to<=G.max)return;
+  var f=(G.min&&G.min<from)?G.min:from,t=(G.max&&G.max>to)?G.max:to;
+  var force=G.force;G.force=false;
+  loadGoogle(f,t,force);
+}
+function ensureGoogle(){
+  var from,to;
+  if(UI.tab==='cal'){
+    if(UI.cv==='month'){var y=+UI.cm.slice(0,4),m=+UI.cm.slice(5,7)-1;from=mondayOf(iso(new Date(y,m,1)));to=addDays(from,41);}
+    else if(UI.cv==='week'){from=mondayOf(UI.sel);to=addDays(from,6);}
+    else{from=UI.sel;to=UI.sel;}
+  }else if(UI.tab==='plan'){var py=+UI.cm.slice(0,4),pm=+UI.cm.slice(5,7)-1;from=mondayOf(iso(new Date(py,pm,1)));to=addDays(from,41);}
+  else if(UI.tab==='home'){from=TODAY;to=addDays(TODAY,14);}
+  else return;
+  needGoogle(from,to);
+}
+function loadGoogle(f,t,force){
+  var cl=window.claude;
+  if(!cl||!cl.use){G.state='none';G.fail=true;return;}
+  G.busy=true;G.state='loading';
+  cl.use('mcp').then(function(m){
+    if(!m){G.state='none';G.fail=true;return;}
+    var all=[];
+    function page(tok,n){
+      var inp={startTime:zIso(f,0),endTime:zIso(t,1),orderBy:'startTime',pageSize:250,timeZone:'Europe/Prague'};
+      if(tok)inp.pageToken=tok;
+      var opt=(force&&!tok)?{cache:{refresh:true}}:{cache:{staleTime:60000}};
+      return m.callTool('Google Calendar','list_events',inp,opt).then(function(r){
+        var p=r.payload;
+        if(typeof p==='string'){try{p=JSON.parse(p);}catch(e){p={};}}
+        p=p||{};
+        (p.events||[]).forEach(function(e){all.push(e);});
+        if(p.nextPageToken&&n<4)return page(p.nextPageToken,n+1);
+      });
+    }
+    return page(null,0).then(function(){
+      G.by={};
+      all.forEach(function(e){
+        var s=e.start||{},en=e.end||{};
+        var allDay=!!s.date&&!s.dateTime;
+        var d0=allDay?s.date:(s.dateTime||'').slice(0,10);
+        if(!d0)return;
+        var tm=allDay?'':(s.dateTime||'').slice(11,16),te=(allDay||!en.dateTime)?'':en.dateTime.slice(11,16);
+        var last=d0;
+        if(allDay&&en.date){last=addDays(en.date,-1);if(last<d0)last=d0;}
+        var d=d0,i=0;
+        while(d<=last&&i<14){
+          (G.by[d]||(G.by[d]=[])).push({id:'g-'+e.id+'-'+d,date:d,time:tm,end:te,allDay:allDay,title:e.summary||'(bez názvu)',scope:'osobni',src:'google',link:e.htmlLink,gid:e.id});
+          d=addDays(d,1);i++;
+        }
+      });
+      G.min=f;G.max=t;G.state='ok';G.n=all.length;G.err='';
+    });
+  }).catch(function(e){
+    G.state='err';G.fail=true;
+    var c=e&&e.code;
+    G.err=(c==='not_in_manifest'||c==='consent_required')?'Google Kalendář není pro diář povolený.':(c==='server_not_connected'||c==='needs_reauth'||c==='selection_required')?'Google Kalendář je odpojený. Klepni nahoře na Připojit.':'Google Kalendář se nepodařilo načíst.';
+  }).then(function(){G.busy=false;if(!typing())render();});
+}
+function gStatus(){
+  if(UI.scope==='prace')return '';
+  var t=G.state==='loading'?'Načítám Google Kalendář…':G.state==='ok'?'Google Kalendář: '+G.n+' událostí':G.state==='err'?G.err:G.state==='none'?'Google Kalendář se načte jen v diáři otevřeném na claude.ai.':'';
+  return t?'<span class="small muted">'+esc(t)+'</span><button class="btn sm" data-act="gRefresh">Obnovit</button>':'';
+}
+function dayLine(d){
+  var sn=true,nd=sn?nameday(d):'',ns=sn?namedaySK(d):'',h=holiday(d),hs=holSkOnly(d);
+  return (h?'<span class="pill hol">'+esc(h)+'</span> ':'')+(hs?'<span class="pill hol">SK: '+esc(hs)+'</span> ':'')+(nd?'<span class="muted">svátek má '+esc(nd)+'</span>':'')+(ns?'<span class="muted">'+(nd?' · ':'')+'meniny má '+esc(ns)+' (SK)</span>':'');
+}
+function evRow(e){
+  var pl=e.src==='train'?'<span class="pill g">Cvičení</span>':e.src==='shift'?'<span class="pill prace">Směna</span>':e.src==='google'?'<span class="pill g">Google</span>':pill(e.scope);
+  var t=(e.src==='google'&&e.link)?'<a class="t" href="'+esc(e.link)+'" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">'+esc(e.title)+'</a>':'<span class="t">'+esc(e.title)+'</span>';
+  return '<li class="row"><span class="when tnum" style="min-width:5.4em">'+evTimeLabel(e)+'</span>'+dotOf(e)+t+'<span class="acts">'+pl+(e.ser?'<button class="btn sm" data-act="evDelSer" data-id="'+e.id+'">Celá řada</button>':'')+(e.src==='google'?'':'<button class="ibtn" data-act="evDel" data-id="'+e.id+'" aria-label="Smazat událost">'+icon('x').replace('<svg','<svg width="16" height="16"')+'</button>')+'</span></li>';
+}
+function eventForm(){
+  return '<form class="form" data-form="addEvent" style="margin-top:12px"><input class="grow" type="text" id="evT" placeholder="Nová událost" aria-label="Název události" required>'+timeInput('evH','','Začátek')+''+timeInput('evE','','Konec')+''+scopeSelect('evS',defScope())+swatchFields('evC')+repFields('ev')+'<label class="small muted" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="evG" checked> Zapsat do Google Kalendáře a upozornit</label><button class="btn pri" type="submit">Přidat</button></form>';
+}
+function endFor(place,d){
+  if(place==='off')return '13:30';
+  if(place==='jin')return '14:00';
+  var w=dowOf(d);
+  return w===6?'01:00':(w===4||w===5)?'03:00':'02:00';
+}
+function startFor(place){return place==='off'?'09:30':place==='jin'?'12:00':place==='nar'?'20:00':'16:00';}
+function shiftForm(){
+  return '<div class="sect">Nová směna</div><form class="form" data-form="addShift"><select id="shP" data-change="shiftPlace" aria-label="Kde"><option value="tyn">Týnská</option><option value="nar">Národní</option><option value="off">Office</option><option value="jin">Jinde</option></select><input class="grow" type="text" id="shN" placeholder="Název, například Books, SPOT, Barback, Meeting" aria-label="Název směny">'+timeInput('shF',startFor('tyn'),'Od')+''+timeInput('shT',endFor('tyn',UI.sel),'Do')+''+repFields('sh')+'<label class="small muted" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="shG" checked> Zapsat do Google Kalendáře a upozornit</label><button class="btn pri" type="submit">Přidat směnu</button></form>';
+}
+function evForms(){return eventForm()+(UI.scope!=='osobni'?shiftForm():'');}
+function shiftSummary(){
+  var cnt=0,mins=0,any=false;
+  S.events.forEach(function(e){
+    if(e.src!=='shift'||e.date.slice(0,7)!==UI.cm)return;
+    any=true;
+    var a=e.time.split(':'),b=(e.end||e.time).split(':');
+    var m=(+b[0]*60+ +b[1])-(+a[0]*60+ +a[1]);if(m<=0)m+=1440;
+    mins+=m;
+    if(!/office|meeting|inventur/i.test(e.title))cnt++;
+  });
+  if(!any)return '';
+  var h=Math.floor(mins/60),r=mins%60;
+  return '<span class="pill prace">'+MONN[+UI.cm.slice(5,7)-1]+': '+cnt+' směn, '+h+(r?' h '+r+' min':' h')+' celkem</span>';
+}
+function shiftList(){
+  var l=[];
+  for(var i=0;i<7;i++){var d=addDays(TODAY,i);eventsOn(d).forEach(function(e){if(e.src==='shift')l.push(e);});}
+  return l.length?'<ul class="list">'+l.map(function(e){return '<li class="row"><span class="when tnum" style="min-width:5.2em">'+DOW[dowOf(e.date)]+' '+shortDate(e.date)+'</span><span class="t">'+esc(e.title)+'</span><span class="when tnum">'+evTimeLabel(e)+'</span></li>';}).join('')+'</ul>':'<div class="muted small">V příštích 7 dnech žádná směna.</div>';
+}
+var TILES=[['plan','Diář','book','plan'],['cal','Kalendář','cal','cal'],['tasks','Úkoly','task','tasks'],['shop','Nákupy','cart','shop'],['meals','Jídelníček','meal','meals'],['train','Cvičení','dumbbell','train'],['notes','Poznámky','note','notes'],['sched','Rozvrh','clock','sched']];
+function tiles(){
+  return '<nav class="tiles" aria-label="Moduly diáře">'+TILES.map(function(x){return '<button type="button" class="tile t-'+x[3]+'" data-act="goto" data-tab="'+x[0]+'"><span class="ti">'+icon(x[2])+'</span><span class="tl">'+x[1]+'</span><span class="tc" aria-hidden="true">›</span></button>';}).join('')+'</nav>';
+}
+
+/* ---------- open planner: month on the left, week on the right ---------- */
+function planMonth(){
+  var y=+UI.cm.slice(0,4),m=+UI.cm.slice(5,7)-1;
+  var start=mondayOf(iso(new Date(y,m,1)));var cells='';
+  var wkStart=mondayOf(UI.sel);
+  for(var i=0;i<42;i++){
+    var d=addDays(start,i);var dm=parse(d).getMonth();
+    if(i>=35&&dm!==m)break;
+    var evs=eventsOn(d);var h=holiday(d);
+    var inWeek=d>=wkStart&&d<=addDays(wkStart,6);
+    var cls='day'+(dm!==m?' out':'')+(dowOf(d)>=5?' we':'')+(h?' hol':'')+(d===TODAY?' today':'')+(inWeek?' inweek':'');
+    cells+='<button type="button" class="'+cls+'" data-act="selDay" data-d="'+d+'" aria-label="'+esc(longDate(d))+'"><span class="n tnum">'+parse(d).getDate()+'</span>'+evs.slice(0,2).map(function(e){return '<span class="evt '+(e.src==='shift'?'prace':e.scope)+'"'+cs(e)+'>'+esc(e.title)+'</span>';}).join('')+(evs.length>2?'<span class="nm">+'+(evs.length-2)+'</span>':'')+'<span class="ev">'+evs.slice(0,6).map(function(e){return '<i class="'+(e.src==='shift'?'prace':e.scope)+'"'+ci(e)+'></i>';}).join('')+'</span></button>';
+  }
+  var dw=DOW.map(function(x){return '<div class="dw">'+x+'</div>';}).join('');
+  return '<div class="cal mini">'+dw+cells+'</div>';
+}
+function planWeek(){
+  var a=mondayOf(UI.sel),out='';
+  for(var i=0;i<7;i++){
+    var d=addDays(a,i),h=holiday(d),evs=eventsOn(d);
+    var tk=S.tasks.filter(function(x){return x.due===d&&inScope(x);});
+    var nm=h||(holSkOnly(d)?'SK: '+holSkOnly(d):'');
+    out+='<div class="pday'+(d===TODAY?' today':'')+(i>=5?' we':'')+'"><div class="ph"><b>'+DOW[i]+' '+parse(d).getDate()+'</b>'+(nm?'<span class="small muted'+(h?' hl':'')+'">'+esc(nm)+'</span>':'')+'</div>'
+      +evs.map(function(e){return '<div class="wev '+(e.src==='shift'?'prace':e.scope)+'"'+cs(e)+'><span class="small tnum muted">'+evTimeLabel(e)+'</span><span>'+esc(e.title)+'</span></div>';}).join('')
+      +tk.map(function(x){return '<label class="ptask"><input class="chk" type="checkbox" data-change="taskDone" data-id="'+x.id+'"'+(x.done?' checked':'')+' aria-label="Hotovo">'+dotOf(x)+'<span class="'+(x.done?'done':'')+'">'+(x.time?'<b class="tnum">'+x.time+'</b> ':'')+esc(x.title)+'</span></label>';}).join('')
+      +'<form class="padd" data-form="planTask" data-d="'+d+'"><input type="text" placeholder="+ úkol" aria-label="Nový úkol na '+esc(longDate(d))+'"><span class="padt">'+timeInput('pt'+d,'','Čas úkolu')+'<button class="btn sm" type="submit" aria-label="Přidat úkol">+</button></span></form></div>';
+  }
+  var und=S.tasks.filter(function(x){return !x.due&&!x.done&&inScope(x);});
+  out+='<div class="pday und"><div class="ph"><b>Bez termínu</b></div>'+(und.length?und.slice(0,6).map(function(x){return '<label class="ptask"><input class="chk" type="checkbox" data-change="taskDone" data-id="'+x.id+'" aria-label="Hotovo"><span>'+esc(x.title)+'</span></label>';}).join('')+(und.length>6?'<span class="small muted">a dalších '+(und.length-6)+'</span>':''):'<span class="small muted">Nic nečeká.</span>')+'</div>';
+  return '<div class="pweek">'+out+'</div>';
+}
+function viewPlan(){
+  var y=+UI.cm.slice(0,4),m=+UI.cm.slice(5,7)-1,a=mondayOf(UI.sel);
+  var sub=UI.scope==='osobni'?'Osobní, s Google Kalendářem':UI.scope==='prace'?'Práce a směny':'Osobní, práce a směny';
+  var tabs=[['tasks','task'],['shop','cart'],['meals','meal'],['train','dumbbell'],['notes','note']].map(function(x){return '<button type="button" class="stab t-'+x[0]+'" data-act="goto" data-tab="'+x[0]+'" aria-label="'+esc(TABS.filter(function(z){return z[0]===x[0];})[0][1])+'">'+icon(x[1])+'</button>';}).join('');
+  var left='<section class="pg"><div class="pgh"><h2>'+icon('cal')+' Kalendář</h2><div class="mnav"><button class="btn sm" data-act="pm" data-n="-1" aria-label="Předchozí měsíc">‹</button><strong>'+MONN[m]+' '+y+'</strong><button class="btn sm" data-act="pm" data-n="1" aria-label="Další měsíc">›</button></div></div>'+planMonth()+'</section>';
+  var right='<section class="pg"><div class="pgh"><h2>'+icon('task')+' Týdenní plán</h2><div class="mnav"><button class="btn sm" data-act="pw" data-n="-1" aria-label="Předchozí týden">‹</button><strong>'+parse(a).getDate()+'.–'+shortDate(addDays(a,6))+'</strong><button class="btn sm" data-act="pw" data-n="1" aria-label="Další týden">›</button></div></div>'+planWeek()+'</section>';
+  return '<div class="page wide">'+head('Diář',sub,'<button class="btn" data-act="cToday">Dnes</button>')+'<div class="spreadwrap"><div class="spread">'+left+'<div class="spine" aria-hidden="true"></div>'+right+'</div><div class="stabs">'+tabs+'</div><div class="pgdots"><button type="button" data-act="pgGo" data-i="0" class="'+(UI.pgi?'':'on')+'">Kalendář</button><button type="button" data-act="pgGo" data-i="1" class="'+(UI.pgi?'on':'')+'">Týdenní plán</button></div></div>'+dayPreview()+'</div>';
+}
+
+function viewHome(){
+  var hr=new Date().getHours();var g=hr<5?'Dobrou noc':hr<10?'Dobré ráno':hr<18?'Dobrý den':'Dobrý večer';
+  var tasks=S.tasks.filter(function(t){return !t.done&&inScope(t)&&t.due&&t.due<=TODAY;}).sort(function(a,b){return a.due.localeCompare(b.due);});
+  var ev=eventsOn(TODAY);
+  var up=[];for(var i=1;i<=14;i++){var d=addDays(TODAY,i);eventsOn(d).forEach(function(e){up.push(e);});}
+  up=up.slice(0,8);
+  var wk=[];for(var j=0;j<7;j++){wk.push(addDays(mondayOf(TODAY),j));}
+  var habs=S.habits.list.slice(0,5);
+  var open=S.shop.filter(function(s){return !s.done;});
+  var tm=addDays(TODAY,1);
+  var h='<div class="page">'+head(g+', Michale','<span>'+longDate(TODAY)+'</span> · '+dayLine(TODAY)+''+((holiday(tm)||holidaySK(tm))?'<br><span class="small">Zítra: '+esc(holiday(tm)||'SK: '+holidaySK(tm))+'</span>':''));
+  h+=tiles();
+  h+='<div class="grid">';
+  h+='<section class="card"><div class="ch"><h2>Dnes</h2><button class="btn sm" data-act="goto" data-tab="cal">Kalendář</button></div>';
+  h+=ev.length?'<ul class="list">'+ev.map(function(e){return '<li class="row"><span class="when tnum">'+evTimeLabel(e)+'</span><span class="t">'+esc(e.title)+'</span>'+(e.src==='train'?'<span class="pill g">Cvičení</span>':e.src==='shift'?'<span class="pill prace">Směna</span>':e.src==='google'?'<span class="pill g">Google</span>':pill(e.scope))+'</li>';}).join('')+'</ul>':'<div class="muted small">Dnes žádná událost.</div>';
+  h+='<div class="sect">Úkoly k dnešku a po termínu</div>';
+  h+=tasks.length?'<ul class="list">'+tasks.map(taskRow).join('')+'</ul>':emptyMsg('Vše hotovo.');
+  h+='<form class="form" data-form="quickTask" style="margin-top:10px"><input class="grow" type="text" id="qt" placeholder="Rychlý úkol na dnes" aria-label="Rychlý úkol">'+timeInput('qtH','','Čas úkolu')+'<button class="btn pri" type="submit">Přidat</button></form></section>';
+  h+='<section class="card"><div class="ch"><h2>Nadcházející</h2></div>';
+  h+=up.length?'<ul class="list">'+up.map(function(e){return '<li class="row"><span class="when tnum" style="min-width:5.2em">'+DOW[dowOf(e.date)]+' '+shortDate(e.date)+'</span><span class="when tnum">'+evTimeLabel(e)+'</span>'+dotOf(e)+'<span class="t">'+esc(e.title)+'</span>'+evPill(e)+'</li>';}).join('')+'</ul>':emptyMsg('Na dva týdny dopředu nic není.');
+  h+=''+(UI.scope!=='osobni'?'<div class="sect">Směny v příštích 7 dnech</div>'+shiftList():'')+'</section>';
+  h+='<section class="card"><div class="ch"><h2>Nákupy</h2><button class="btn sm" data-act="goto" data-tab="shop">Otevřít</button></div>';
+  h+=open.length?'<ul class="list">'+open.slice(0,6).map(function(s){return '<li class="row"><input class="chk" type="checkbox" data-change="shopDone" data-id="'+s.id+'" aria-label="Koupeno"><span class="t">'+esc(s.name)+'</span><span class="when">'+esc(s.sec)+'</span></li>';}).join('')+'</ul>'+(open.length>6?'<div class="muted small" style="margin-top:6px">a dalších '+(open.length-6)+'</div>':''):emptyMsg('Nákupní seznam je prázdný.');
+  h+='</section>';
+  h+='<section class="card"><h2>Rychlá poznámka</h2><form class="form" data-form="quickNote"><input class="grow" type="text" id="qn" placeholder="Co ti běží hlavou?" aria-label="Rychlá poznámka"><button class="btn pri" type="submit">Uložit</button></form></section>';
+  h+='</div></div>';
+  return h;
+}
+
+function monthBody(){
+  var y=+UI.cm.slice(0,4),m=+UI.cm.slice(5,7)-1;
+  var first=iso(new Date(y,m,1));var start=mondayOf(first);
+  var cells='';
+  for(var i=0;i<42;i++){
+    var d=addDays(start,i);var dm=parse(d).getMonth();
+    if(i>=35&&dm!==m)break;
+    var evs=eventsOn(d);var h=holiday(d);var we=dowOf(d)>=5;
+    var cls='day'+(dm!==m?' out':'')+(we?' we':'')+(h?' hol':'')+(d===TODAY?' today':'')+(d===UI.sel?' sel':'');
+    var label=h||(holSkOnly(d)?'SK: '+holSkOnly(d):'');
+    cells+='<button type="button" class="'+cls+'" data-act="selDay" data-d="'+d+'" aria-label="'+esc(longDate(d))+'"><span class="n tnum">'+parse(d).getDate()+'</span><span class="nm">'+esc(label)+'</span>'+evs.slice(0,2).map(function(e){return '<span class="evt '+(e.src==='shift'?'prace':e.scope)+'"'+cs(e)+'>'+esc(e.title)+'</span>';}).join('')+(evs.length>2?'<span class="nm">+'+(evs.length-2)+' další</span>':'')+'<span class="ev">'+evs.slice(0,6).map(function(e){return '<i class="'+(e.src==='shift'?'prace':e.scope)+'"'+ci(e)+'></i>';}).join('')+'</span></button>';
+  }
+  var dw=DOW.map(function(x){return '<div class="dw">'+x+'</div>';}).join('');
+  return '<div class="card"><div class="cal">'+dw+cells+'</div></div>'+dayPreview();
+}
+function dayCard(){
+  var ev=eventsOn(UI.sel);
+  return '<div class="card"><div class="ch"><h2>'+esc(longDate(UI.sel))+'</h2></div><div style="margin-bottom:10px">'+dayLine(UI.sel)+'</div>'+(ev.length?'<ul class="list">'+ev.map(evRow).join('')+'</ul>':'<div class="muted small">V tento den nic není.</div>')+evForms()+'</div>';
+}
+function weekBody(){
+  var a=mondayOf(UI.sel);var out='<div class="days">';
+  for(var i=0;i<7;i++){
+    var d=addDays(a,i),h=holiday(d),evs=eventsOn(d);
+    out+='<div class="dcard'+(d===TODAY?' today':'')+(d===UI.sel?' selc':'')+'"><button type="button" class="dh" data-act="selDay" data-d="'+d+'"><span>'+DOWL[i]+'</span><span class="muted small">'+shortDate(d)+'</span></button>'+(h?'<span class="pill hol">'+esc(h)+'</span>':'')+(holSkOnly(d)?'<span class="pill hol">SK: '+esc(holSkOnly(d))+'</span>':'')+(evs.length?evs.map(function(e){return '<div class="wev '+(e.src==='shift'?'prace':e.scope)+'"'+cs(e)+'><span class="small tnum muted">'+evTimeLabel(e)+'</span><span>'+esc(e.title)+'</span></div>';}).join(''):'<span class="muted small">Volno</span>')+'</div>';
+  }
+  out+='</div>';
+  return out+dayPreview();
+}
+function viewCal(){
+  var cv=UI.cv,label;
+  if(cv==='month'){var y=+UI.cm.slice(0,4),m=+UI.cm.slice(5,7)-1;label=MONN[m]+' '+y;}
+  else if(cv==='week'){var a=mondayOf(UI.sel);label=shortDate(a)+' – '+shortDate(addDays(a,6));}
+  else label=DOW[dowOf(UI.sel)]+' '+shortDate(UI.sel);
+  var seg=[['month','Měsíc'],['week','Týden'],['day','Den']].map(function(s){return '<button type="button" data-act="cv" data-v="'+s[0]+'" aria-pressed="'+(cv===s[0])+'">'+s[1]+'</button>';}).join('');
+  var right='<div class="calhead"><div class="seg" role="group" aria-label="Zobrazení kalendáře">'+seg+'</div><div class="mnav"><button class="btn" data-act="cnav" data-n="-1" aria-label="Zpět">‹</button><strong>'+label+'</strong><button class="btn" data-act="cnav" data-n="1" aria-label="Vpřed">›</button><button class="btn" data-act="cToday">Dnes</button></div></div>';
+  var sub=UI.scope==='osobni'?'Osobní, s Google Kalendářem':UI.scope==='prace'?'Práce a směny':'Osobní, práce a směny';
+  var r='<div class="page">'+head('Kalendář',sub,right);
+  var tools=gStatus()+(UI.scope!=='osobni'?shiftSummary():'');
+  if(tools)r+='<div class="tools">'+tools+'</div>';
+  if(cv==='month')r+=monthBody();
+  else if(cv==='week')r+=weekBody();
+  else r+=dayCard();
+  return r+'</div>';
+}
+function viewTasks(){
+  var f=UI.taskF;
+  var list=S.tasks.filter(function(t){return inScope(t)&&(f==='all'||(f==='open'?!t.done:t.done));});
+  list.sort(function(a,b){return (a.done-b.done)||((a.due||'9999').localeCompare(b.due||'9999'));});
+  var chips=[['open','Otevřené'],['done','Hotové'],['all','Vše']].map(function(c){return '<button type="button" class="chip" data-act="taskF" data-f="'+c[0]+'" aria-pressed="'+(f===c[0])+'">'+c[1]+'</button>';}).join('');
+  var r='<div class="page">'+head('Úkoly',S.tasks.filter(function(t){return !t.done&&inScope(t);}).length+' otevřených')+'<div class="card"><form class="form" data-form="addTask"><input class="grow" type="text" id="tkT" placeholder="Nový úkol" aria-label="Název úkolu" required><input type="date" id="tkD" aria-label="Termín">'+timeInput('tkH','','Čas')+scopeSelect('tkS',defScope())+swatchFields('tkC')+'<label class="small muted" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="tkG" checked> S časem zapsat do Google Kalendáře a upozornit</label><button class="btn pri" type="submit">Přidat</button></form></div>';
+  r+='<div class="card"><div class="chips" style="margin-bottom:10px">'+chips+'</div>'+(list.length?'<ul class="list">'+list.map(taskRow).join('')+'</ul>':emptyMsg('Tady nic není.'))+'</div></div>';
+  return r;
+}
+
+function viewShop(){
+  var done=S.shop.filter(function(s){return s.done;}).length;
+  var r='<div class="page">'+head('Nákupy',done+' z '+S.shop.length+' koupeno','<button class="btn" data-act="shopClear">Vyčistit koupené</button>');
+  r+='<div class="card"><form class="form" data-form="addShop"><input class="grow" type="text" id="spN" placeholder="Co koupit" aria-label="Co koupit" required><select id="spS" aria-label="Oddělení">'+SECTIONS.map(function(s){return '<option>'+s+'</option>';}).join('')+'</select><button class="btn pri" type="submit">Přidat</button></form></div>';
+  r+='<div class="grid">';
+  SECTIONS.forEach(function(sec){
+    var items=S.shop.filter(function(s){return s.sec===sec;});
+    if(!items.length)return;
+    r+='<section class="card"><h2>'+sec+'</h2><ul class="list">'+items.map(function(s){return '<li class="row"><input class="chk" type="checkbox" data-change="shopDone" data-id="'+s.id+'"'+(s.done?' checked':'')+' aria-label="Koupeno"><span class="t'+(s.done?' done':'')+'">'+esc(s.name)+'</span><button class="ibtn" data-act="shopDel" data-id="'+s.id+'" aria-label="Smazat položku">'+icon('x').replace('<svg','<svg width="16" height="16"')+'</button></li>';}).join('')+'</ul></section>';
+  });
+  r+='</div>'+(S.shop.length?'':'<div class="card">'+emptyMsg('Seznam je prázdný.')+'</div>')+'</div>';
+  return r;
+}
+
+function viewMeals(){
+  var w=UI.mealW;var days=[];for(var i=0;i<7;i++)days.push(addDays(w,i));
+  var r='<div class="page">'+head('Jídelníček',shortDate(w)+' – '+shortDate(days[6])+' '+parse(days[6]).getFullYear(),'<div class="mnav"><button class="btn" data-act="mw" data-n="-7" aria-label="Předchozí týden">‹</button><button class="btn" data-act="mwToday">Tento týden</button><button class="btn" data-act="mw" data-n="7" aria-label="Další týden">›</button></div>');
+  r+='<div class="days">'+days.map(function(d){
+    return '<div class="dcard'+(d===TODAY?' today':'')+'"><h3><span>'+DOWL[dowOf(d)]+'</span><span class="muted small">'+shortDate(d)+'</span></h3>'+MEALS.map(function(m,i){return '<label>'+m+'<input type="text" data-change="meal" data-k="'+d+'|'+i+'" value="'+esc(S.meals[d+'|'+i]||'')+'" aria-label="'+m+' '+DOWL[dowOf(d)]+'"></label>';}).join('')+'</div>';
+  }).join('')+'</div>';
+  r+='<div class="card"><h2>Poznámky k týdnu</h2><textarea data-change="mealNote" data-k="'+w+'|n" placeholder="Co je třeba koupit, co vyzkoušet…" aria-label="Poznámky k týdnu">'+esc(S.meals[w+'|n']||'')+'</textarea></div></div>';
+  return r;
+}
+
+function habitGrid(list,days,mini){
+  var r='<div style="display:flex;flex-direction:column;gap:8px"><div class="hab"><span></span>'+days.map(function(d){return '<span class="h">'+DOW[dowOf(d)]+'</span>';}).join('')+'<span></span></div>';
+  list.forEach(function(h){
+    var log=S.habits.log[h.id]||[];var n=days.filter(function(d){return log.indexOf(d)>=0;}).length;
+    r+='<div class="hab"><span class="name">'+esc(h.name)+'</span>'+days.map(function(d){return '<button type="button" class="hb'+(d===TODAY?' td':'')+'" data-act="habit" data-id="'+h.id+'" data-d="'+d+'" aria-pressed="'+(log.indexOf(d)>=0)+'" aria-label="'+esc(h.name)+' '+shortDate(d)+'"></button>';}).join('')+'<span class="muted small tnum">'+n+'/7</span></div>';
+  });
+  return r+'</div>';
+}
+function viewGoals(){
+  var w=UI.habW;var days=[];for(var i=0;i<7;i++)days.push(addDays(w,i));
+  var r='<div class="page">'+head('Cíle a návyky','Velké cíle po malých krocích');
+  r+='<div class="card"><div class="ch"><h2>Návyky</h2><div class="mnav"><button class="btn sm" data-act="hw" data-n="-7" aria-label="Předchozí týden">‹</button><span class="small tnum">'+shortDate(w)+' – '+shortDate(days[6])+'</span><button class="btn sm" data-act="hw" data-n="7" aria-label="Další týden">›</button></div></div>';
+  r+=S.habits.list.length?habitGrid(S.habits.list,days):emptyMsg('Zatím žádný návyk.');
+  r+='<form class="form" data-form="addHabit" style="margin-top:12px"><input class="grow" type="text" id="hbN" placeholder="Nový návyk, například Meditace" aria-label="Nový návyk" required><button class="btn pri" type="submit">Přidat</button></form>';
+  if(S.habits.list.length){r+='<div class="chips" style="margin-top:10px">'+S.habits.list.map(function(h){return '<button type="button" class="chip" data-act="habitDel" data-id="'+h.id+'" aria-label="Smazat návyk '+esc(h.name)+'">'+esc(h.name)+' ×</button>';}).join('')+'</div>';}
+  r+='</div>';
+  r+='<div class="card"><form class="form" data-form="addGoal"><input class="grow" type="text" id="glT" placeholder="Nový cíl" aria-label="Název cíle" required><button class="btn pri" type="submit">Přidat cíl</button></form></div>';
+  r+='<div class="grid">'+S.goals.map(function(g){
+    var done=g.steps.filter(function(s){return s.d;}).length;var pc=g.steps.length?Math.round(done/g.steps.length*100):0;
+    return '<section class="card"><div class="ch"><h2>'+esc(g.title)+'</h2><button class="ibtn" data-act="goalDel" data-id="'+g.id+'" aria-label="Smazat cíl">'+icon('x').replace('<svg','<svg width="16" height="16"')+'</button></div><div class="bar g" role="progressbar" aria-valuenow="'+pc+'" aria-valuemin="0" aria-valuemax="100"><i style="width:'+pc+'%"></i></div><div class="muted small" style="margin:4px 0 8px">'+done+' z '+g.steps.length+' kroků · '+pc+' %</div><ul class="list">'+g.steps.map(function(s,i){return '<li class="row"><input class="chk" type="checkbox" data-change="stepDone" data-id="'+g.id+'" data-i="'+i+'"'+(s.d?' checked':'')+' aria-label="Hotovo"><span class="t'+(s.d?' done':'')+'">'+esc(s.t)+'</span><button class="ibtn" data-act="stepDel" data-id="'+g.id+'" data-i="'+i+'" aria-label="Smazat krok">'+icon('x').replace('<svg','<svg width="16" height="16"')+'</button></li>';}).join('')+'</ul><form class="form" data-form="addStep" data-id="'+g.id+'" style="margin-top:8px"><input class="grow" type="text" name="s" placeholder="Další krok" aria-label="Další krok" required><button class="btn sm" type="submit">Přidat</button></form></section>';
+  }).join('')+'</div></div>';
+  return r;
+}
+
+function noteCards(){
+  var q=UI.noteQ.toLowerCase();
+  var list=S.notes.filter(function(n){return inScope(n)&&(!q||(n.title+' '+n.text).toLowerCase().indexOf(q)>=0);});
+  list.sort(function(a,b){return (!!b.pin-!!a.pin)||String(b.at||'').localeCompare(String(a.at||''));});
+  if(!list.length)return '<div class="card">'+emptyMsg(q?'Nic nenalezeno.':'Zatím žádné poznámky.')+'</div>';
+  return '<div class="grid">'+list.map(function(n){
+    return '<section class="card note"><input class="nt" type="text" data-change="noteT" data-id="'+n.id+'" value="'+esc(n.title)+'" placeholder="Nadpis" aria-label="Nadpis poznámky"><textarea data-change="noteX" data-id="'+n.id+'" aria-label="Text poznámky">'+esc(n.text)+'</textarea><div class="ft"><span>'+pill(n.scope)+'</span><span><button class="btn sm" data-act="notePin" data-id="'+n.id+'">'+(n.pin?'Odepnout':'Připnout')+'</button> <button class="ibtn" data-act="noteDel" data-id="'+n.id+'" aria-label="Smazat poznámku">'+icon('x').replace('<svg','<svg width="16" height="16"')+'</button></span></div></section>';
+  }).join('')+'</div>';
+}
+function viewNotes(){
+  return '<div class="page">'+head('Poznámky','Nápady, seznamy a vše, co nechceš zapomenout')+'<div class="card"><form class="form" data-form="addNote"><input class="grow" type="text" id="ntT" placeholder="Nadpis" aria-label="Nadpis" required>'+scopeSelect('ntS',defScope())+'<button class="btn pri" type="submit">Nová poznámka</button></form></div><div><input type="text" id="noteQ" placeholder="Hledat v poznámkách" aria-label="Hledat v poznámkách" value="'+esc(UI.noteQ)+'"></div><div id="noteList">'+noteCards()+'</div></div>';
+}
+
+var TRTYPES=['Posilovna','Běh','Plavání','Kolo','Jóga','Box','Skupinová lekce','Jiné'];
+function viewTrain(){
+  var all=S.events.filter(function(e){return e.src==='train';}).sort(function(a,b){return (a.date+(a.time||'')).localeCompare(b.date+(b.time||''));});
+  var up=all.filter(function(e){return e.date>=TODAY;}),past=all.filter(function(e){return e.date<TODAY;}).slice(-5).reverse();
+  var mo=all.filter(function(e){return e.date.slice(0,7)===TODAY.slice(0,7)&&e.date<=TODAY;}).length;
+  var row=function(e){return '<li class="row"><span class="when tnum" style="min-width:6.4em">'+DOW[dowOf(e.date)]+' '+shortDate(e.date)+'</span><span class="when tnum">'+evTimeLabel(e)+'</span>'+dotOf(e)+'<span class="t">'+esc(e.title)+'</span><span class="acts">'+(e.g==='ok'?'<span class="pill g">Google</span>':'')+(e.ser?'<button class="btn sm" data-act="evDelSer" data-id="'+e.id+'">Celá řada</button>':'')+'<button class="ibtn" data-act="evDel" data-id="'+e.id+'" aria-label="Smazat trénink">'+icon('x').replace('<svg','<svg width="16" height="16"')+'</button></span></li>';};
+  var r='<div class="page">'+head('Cvičení','Tréninky se samy zapíšou do Kalendáře i Diáře','<span class="pill g">Tento měsíc: '+mo+' tréninků</span>');
+  r+='<div class="card"><form class="form" data-form="addTrain"><input type="date" id="trD" value="'+TODAY+'" aria-label="Datum" required>'+timeInput('trF','18:00','Od')+''+timeInput('trT','19:00','Do')+'<select id="trY" aria-label="Druh">'+TRTYPES.map(function(x){return '<option>'+x+'</option>';}).join('')+'</select><input class="grow" type="text" id="trN" placeholder="Poznámka, například nohy, 5 km" aria-label="Poznámka">'+swatchFields('trC')+repFields('tr')+'<label class="small muted" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="trG" checked> Zapsat do Google Kalendáře a upozornit</label><button class="btn pri" type="submit">Přidat trénink</button></form>'+(UI.trMsg?'<div class="small muted" style="margin-top:8px">'+esc(UI.trMsg)+'</div>':'')+'</div>';
+  r+='<div class="grid"><section class="card"><div class="ch"><h2>Nadcházející</h2></div>'+(up.length?'<ul class="list">'+up.slice(0,30).map(row).join('')+'</ul>':emptyMsg('Zatím nemáš naplánovaný žádný trénink.'))+'</section>';
+  r+='<section class="card"><div class="ch"><h2>Naposledy</h2></div>'+(past.length?'<ul class="list">'+past.map(row).join('')+'</ul>':emptyMsg('Zatím nic.'))+'</section></div></div>';
+  return r;
+}
+function viewSched(){
+  var r='<div class="page">'+head('Týdenní rozvrh','Opakující se bloky týdne: práce, sport, rutiny')+'<div class="card"><form class="form" data-form="addBlock"><select id="bkD" aria-label="Den">'+DOWL.map(function(d,i){return '<option value="'+i+'"'+(i===dowOf(TODAY)?' selected':'')+'>'+d+'</option>';}).join('')+'</select>'+timeInput('bkF','09:00','Od')+''+timeInput('bkT','10:00','Do')+'<input class="grow" type="text" id="bkN" placeholder="Co se děje" aria-label="Název bloku" required>'+scopeSelect('bkS',defScope())+'<button class="btn pri" type="submit">Přidat</button></form></div>';
+  r+='<div class="sched">'+DOWL.map(function(dn,i){
+    var b=S.sched.filter(function(x){return +x.day===i&&inScope(x);}).sort(function(a,c){return a.from.localeCompare(c.from);});
+    return '<div class="dcard'+(i===dowOf(TODAY)?' today':'')+'"><h3>'+dn+'</h3>'+(b.length?b.map(function(x){return '<div class="blk '+x.scope+'"><span><span class="small muted tnum">'+x.from+'–'+x.to+'</span><b>'+esc(x.title)+'</b></span><button class="ibtn" data-act="blkDel" data-id="'+x.id+'" aria-label="Smazat blok">'+icon('x').replace('<svg','<svg width="14" height="14"')+'</button></div>';}).join(''):'<span class="muted small">Volno</span>')+'</div>';
+  }).join('')+'</div></div>';
+  return r;
+}
+
+function viewFin(){
+  var m=UI.finM;var y=+m.slice(0,4),mo=+m.slice(5,7)-1;
+  var list=S.fin.filter(function(f){return f.date.slice(0,7)===m&&inScope(f);}).sort(function(a,b){return b.date.localeCompare(a.date);});
+  var inc=0,out=0,by={};list.forEach(function(f){if(f.type==='in')inc+=f.amount;else{out+=f.amount;by[f.cat]=(by[f.cat]||0)+f.amount;}});
+  var cats=Object.keys(by).sort(function(a,b){return by[b]-by[a];});var max=cats.length?by[cats[0]]:1;
+  var r='<div class="page">'+head('Finance',MONN[mo]+' '+y,'<div class="mnav"><button class="btn" data-act="fm" data-n="-1" aria-label="Předchozí měsíc">‹</button><button class="btn" data-act="fmToday">Tento měsíc</button><button class="btn" data-act="fm" data-n="1" aria-label="Další měsíc">›</button></div>');
+  r+='<div class="sum"><div class="card"><span class="muted small">Příjmy</span><b class="pos tnum">'+money(inc)+'</b></div><div class="card"><span class="muted small">Výdaje</span><b class="neg tnum">'+money(out)+'</b></div><div class="card"><span class="muted small">Zůstatek</span><b class="tnum '+(inc-out>=0?'pos':'neg')+'">'+money(inc-out)+'</b></div></div>';
+  r+='<div class="card"><form class="form" data-form="addFin"><select id="fnY" aria-label="Typ"><option value="out">Výdaj</option><option value="in">Příjem</option></select><input type="number" id="fnA" min="0" step="1" placeholder="Částka v Kč" aria-label="Částka" required><select id="fnC" aria-label="Kategorie">'+FINCATS.map(function(c){return '<option>'+c+'</option>';}).join('')+'</select><input class="grow" type="text" id="fnN" placeholder="Poznámka" aria-label="Poznámka"><input type="date" id="fnD" value="'+(TODAY.slice(0,7)===m?TODAY:m+'-01')+'" aria-label="Datum">'+scopeSelect('fnS',defScope())+'<button class="btn pri" type="submit">Přidat</button></form></div>';
+  r+='<div class="grid"><section class="card"><h2>Výdaje podle kategorií</h2>'+(cats.length?cats.map(function(c){return '<div class="cat"><span>'+esc(c)+'</span><div class="bar"><i style="width:'+Math.round(by[c]/max*100)+'%"></i></div><span class="tnum">'+money(by[c])+'</span></div>';}).join(''):emptyMsg('Tento měsíc zatím žádné výdaje.'))+'</section>';
+  r+='<section class="card"><h2>Pohyby</h2>'+(list.length?'<ul class="list">'+list.map(function(f){return '<li class="row"><span class="when tnum" style="min-width:3.4em">'+shortDate(f.date)+'</span><span class="t">'+esc(f.note||f.cat)+'<br><span class="muted small">'+esc(f.cat)+'</span></span>'+pill(f.scope)+'<b class="tnum '+(f.type==='in'?'pos':'neg')+'">'+(f.type==='in'?'+':'−')+money(f.amount)+'</b><button class="ibtn" data-act="finDel" data-id="'+f.id+'" aria-label="Smazat záznam">'+icon('x').replace('<svg','<svg width="16" height="16"')+'</button></li>';}).join('')+'</ul>':emptyMsg('Žádné záznamy.'))+'</section></div></div>';
+  return r;
+}
+
+function viewMore(){
+  return '<div class="page">'+head('Další moduly')+'<div class="more">'+TABS.filter(function(t){return MOBILE.indexOf(t[0])<0;}).map(function(t){return '<button type="button" data-act="goto" data-tab="'+t[0]+'">'+icon(t[2])+t[1]+'</button>';}).join('')+'</div></div>';
+}
+
+var VIEWS={home:viewHome,plan:viewPlan,cal:viewCal,tasks:viewTasks,shop:viewShop,meals:viewMeals,train:viewTrain,notes:viewNotes,sched:viewSched,fin:viewFin,more:viewMore};
+
+function scopeHtml(){
+  return [['all','Vše'],['osobni','Osobní'],['prace','Práce']].map(function(s){return '<button type="button" data-act="scope" data-s="'+s[0]+'" aria-pressed="'+(UI.scope===s[0])+'">'+s[1]+'</button>';}).join('');
+}
+function renderChrome(){
+  document.getElementById('nav').innerHTML=TABS.map(function(t){return '<button type="button" data-act="goto" data-tab="'+t[0]+'"'+(UI.tab===t[0]?' aria-current="page"':'')+'>'+icon(t[2])+t[1]+'</button>';}).join('');
+  document.getElementById('tabbar').innerHTML=MOBILE.map(function(k){var t=TABS.filter(function(x){return x[0]===k;})[0];var cur=UI.tab===k;return '<button type="button" data-act="goto" data-tab="'+t[0]+'"'+(cur?' aria-current="page"':'')+' aria-label="'+t[1]+'">'+icon(t[2])+'<span>'+(SHORT[k]||t[1])+'</span></button>';}).join('');
+  document.getElementById('scopeTop').innerHTML=scopeHtml();
+  document.getElementById('scopeSide').innerHTML=scopeHtml();
+}
+function render(){
+  dirtyRender=false;
+  renderChrome();
+  var main=document.getElementById('main');
+  var v=(VIEWS[UI.tab]||viewHome)();
+  var banner=hasExamples()&&ready?'<div class="page" style="margin-bottom:16px"><div class="banner"><span>V diáři jsou ukázková data, ať vidíš, jak vypadá. Své věci přidávej klidně hned.</span><button class="btn sm" data-act="clearEx">Smazat ukázky</button></div></div>':'';
+  var un=(!hasExamples()&&ready)?unsentEv().length:0;if(un)banner+='<div class="page" style="margin-bottom:16px"><div class="banner"><span>'+(UI.bf?UI.bfMsg:un+' '+(un===1?'událost není':un<5?'události nejsou':'událostí není')+' v Google Kalendáři (od dneška dál).')+'</span>'+(UI.bf?'':'<button class="btn sm pri" data-act="bfAll">Zapsat do Googlu</button>')+'</div></div>';
+  main.innerHTML=banner+v+(UI.dayOpen?dayModal():'')+(UI.toast?'<div class="toast" role="status">'+esc(UI.toast)+'</div>':'');
+  if(UI.focusOpen){UI.focusOpen=false;var fo=document.getElementById('evT');if(fo)try{fo.focus();}catch(e){}}
+  var spr=document.querySelector('.spread');if(spr&&UI.pgi&&spr.clientWidth)spr.scrollLeft=spr.clientWidth;
+  ensureGoogle();
+}
+
+/* ---------- actions ---------- */
+var A={pgGo:function(el){var i=+el.dataset.i;UI.pgi=i;var sp=document.querySelector('.spread');if(sp)sp.scrollTo({left:i*sp.clientWidth,behavior:'smooth'});pgMark();},
+  ruleDel:function(el){var rs=getRules().slice();rs.splice(+el.dataset.i,1);S.meta.rules=rs;save('meta');render();},
+  pm:function(el){var y=+UI.cm.slice(0,4),m=+UI.cm.slice(5,7)-1+(+el.dataset.n);var f=iso(new Date(y,m,1));UI.cm=f.slice(0,7);UI.sel=UI.cm===TODAY.slice(0,7)?TODAY:f;render();},
+  pw:function(el){UI.sel=addDays(UI.sel,7*(+el.dataset.n));UI.cm=UI.sel.slice(0,7);render();},
+  goto:function(el){UI.dayOpen=false;UI.tab=el.dataset.tab;try{history.replaceState(null,'','#'+UI.tab);}catch(e){}render();document.getElementById('main').scrollTop=0;},
+  scope:function(el){UI.scope=el.dataset.s;try{localStorage.setItem('diar.scope',UI.scope);}catch(e){}render();},
+  clearEx:clearExamples,
+  bfAll:gBackfill,
+  selDay:function(el){var d=el.dataset.d,now=Date.now();var dbl=UI.lastSel===d&&now-(UI.lastT||0)<450;UI.lastSel=d;UI.lastT=now;UI.sel=d;UI.cm=d.slice(0,7);if(dbl){UI.dayOpen=true;UI.focusOpen=true;}render();},
+  dayOpen:function(){UI.dayOpen=true;UI.focusOpen=true;render();},
+  dayClose:function(){UI.dayOpen=false;render();},
+  dayNav:function(el){UI.sel=addDays(UI.sel,+el.dataset.n);UI.cm=UI.sel.slice(0,7);render();},
+  cnav:function(el){var n=+el.dataset.n;if(UI.cv==='month'){var y=+UI.cm.slice(0,4),m=+UI.cm.slice(5,7)-1+n;UI.cm=iso(new Date(y,m,1)).slice(0,7);}else{UI.sel=addDays(UI.sel,UI.cv==='week'?7*n:n);UI.cm=UI.sel.slice(0,7);}render();},
+  cToday:function(){UI.sel=TODAY;UI.cm=TODAY.slice(0,7);render();},
+  cv:function(el){UI.cv=el.dataset.v;UI.cm=UI.sel.slice(0,7);try{localStorage.setItem('diar.cv',UI.cv);}catch(e){}render();},
+  gRefresh:function(){G.fail=false;G.force=true;G.min='';G.max='';render();},
+  cm:function(el){var y=+UI.cm.slice(0,4),m=+UI.cm.slice(5,7)-1+(+el.dataset.n);var d=new Date(y,m,1);UI.cm=iso(d).slice(0,7);render();},
+  cmToday:function(){UI.cm=TODAY.slice(0,7);UI.sel=TODAY;render();},
+  evDel:function(el){
+    var ev=S.events.filter(function(x){return x.id===el.dataset.id;})[0];
+    S.events=S.events.filter(function(x){return x.id!==el.dataset.id;});save('events');render();
+    if(ev&&ev.gid){
+      if(ev.ser){UI.trMsg='Z diáře je smazaný jen tento termín. V Google Kalendáři zůstává, smaž ho tam ručně nebo smaž celou řadu.';toast(UI.trMsg);}
+      else gDelete(ev.gid);
+    }
+  },
+  evDelSer:function(el){
+    var ev=S.events.filter(function(x){return x.id===el.dataset.id;})[0];if(!ev||!ev.ser)return;
+    S.events=S.events.filter(function(x){return x.ser!==ev.ser;});save('events');render();
+    if(ev.gid)gDelete(ev.gid);
+  },
+  taskF:function(el){UI.taskF=el.dataset.f;render();},
+  taskDel:function(el){var tk=S.tasks.filter(function(x){return x.id===el.dataset.id;})[0];if(tk&&tk.gid)gDelete(tk.gid);S.tasks=S.tasks.filter(function(t){return t.id!==el.dataset.id;});save('tasks');render();},
+  shopClear:function(){S.shop=S.shop.filter(function(s){return !s.done;});save('shop');render();},
+  shopDel:function(el){S.shop=S.shop.filter(function(s){return s.id!==el.dataset.id;});save('shop');render();},
+  mw:function(el){UI.mealW=addDays(UI.mealW,+el.dataset.n);render();},
+  mwToday:function(){UI.mealW=mondayOf(TODAY);render();},
+  hw:function(el){UI.habW=addDays(UI.habW,+el.dataset.n);render();},
+  habit:function(el){var id=el.dataset.id,d=el.dataset.d;var l=S.habits.log[id]||(S.habits.log[id]=[]);var i=l.indexOf(d);if(i>=0)l.splice(i,1);else l.push(d);save('habits');render();},
+  habitDel:function(el){S.habits.list=S.habits.list.filter(function(h){return h.id!==el.dataset.id;});delete S.habits.log[el.dataset.id];save('habits');render();},
+  goalDel:function(el){S.goals=S.goals.filter(function(g){return g.id!==el.dataset.id;});save('goals');render();},
+  stepDel:function(el){var g=S.goals.filter(function(x){return x.id===el.dataset.id;})[0];if(g){g.steps.splice(+el.dataset.i,1);save('goals');render();}},
+  notePin:function(el){var n=S.notes.filter(function(x){return x.id===el.dataset.id;})[0];if(n){n.pin=!n.pin;save('notes');render();}},
+  noteDel:function(el){S.notes=S.notes.filter(function(n){return n.id!==el.dataset.id;});save('notes');render();},
+  blkDel:function(el){S.sched=S.sched.filter(function(b){return b.id!==el.dataset.id;});save('sched');render();},
+  fm:function(el){var y=+UI.finM.slice(0,4),m=+UI.finM.slice(5,7)-1+(+el.dataset.n);UI.finM=iso(new Date(y,m,1)).slice(0,7);render();},
+  fmToday:function(){UI.finM=TODAY.slice(0,7);render();},
+  finDel:function(el){S.fin=S.fin.filter(function(f){return f.id!==el.dataset.id;});save('fin');render();}
+};
+var C={
+  shiftPlace:function(el){var p=el.value;setTime('shF',startFor(p));setTime('shT',endFor(p,UI.sel));},
+  taskDone:function(el){var t=S.tasks.filter(function(x){return x.id===el.dataset.id;})[0];if(t){t.done=el.checked;save('tasks');render();}},
+  shopDone:function(el){var s=S.shop.filter(function(x){return x.id===el.dataset.id;})[0];if(s){s.done=el.checked;save('shop');render();}},
+  stepDone:function(el){var g=S.goals.filter(function(x){return x.id===el.dataset.id;})[0];if(g){g.steps[+el.dataset.i].d=el.checked;save('goals');render();}},
+  meal:function(el){var v=el.value.trim();if(v)S.meals[el.dataset.k]=v;else delete S.meals[el.dataset.k];save('meals');},
+  mealNote:function(el){var v=el.value.trim();if(v)S.meals[el.dataset.k]=v;else delete S.meals[el.dataset.k];save('meals');},
+  noteT:function(el){var n=S.notes.filter(function(x){return x.id===el.dataset.id;})[0];if(n){n.title=el.value;n.at=TODAY;save('notes');}},
+  noteX:function(el){var n=S.notes.filter(function(x){return x.id===el.dataset.id;})[0];if(n){n.text=el.value;n.at=TODAY;save('notes');}}
+};
+function timeInput(id,v,label){
+  v=normTime(v);var h=v?v.slice(0,2):'',m=v?v.slice(3,5):'00';
+  var ho='<option value="">--</option>',mo='';
+  for(var i=0;i<24;i++){var s=p2(i);ho+='<option value="'+s+'"'+(s===h?' selected':'')+'>'+s+'</option>';}
+  var ms=[];for(var j=0;j<60;j+=5)ms.push(p2(j));if(ms.indexOf(m)<0){ms.push(m);ms.sort();}
+  ms.forEach(function(s){mo+='<option value="'+s+'"'+(s===m?' selected':'')+'>'+s+'</option>';});
+  return '<span class="tp"><select class="tps" data-p="h" aria-label="'+label+', hodina">'+ho+'</select><b>:</b><select class="tps" data-p="m" aria-label="'+label+', minuta">'+mo+'</select><input type="hidden" id="'+id+'" value="'+v+'"></span>';
+}
+function setTime(id,v){
+  var f=document.getElementById(id);if(!f)return;f.value=v;
+  var w=f.parentNode;if(!w||!w.querySelector)return;
+  var h=w.querySelector('[data-p="h"]'),m=w.querySelector('[data-p="m"]');
+  if(h)h.value=v?v.slice(0,2):'';if(m&&v){var mm=v.slice(3,5);if(!m.querySelector('option[value="'+mm+'"]')){var o=document.createElement('option');o.value=mm;o.textContent=mm;m.appendChild(o);}m.value=mm;}
+}
+function normTime(s){
+  s=String(s||'').toLowerCase().replace(/hod\.?|h/g,'').replace(/[.,\s]+/g,':').replace(/^:+|:+$/g,'');
+  var h,m,x;
+  if((x=s.match(/^(\d{1,2})$/))){h=+x[1];m=0;}
+  else if((x=s.match(/^(\d{1,2}):(\d{1,2})$/))){h=+x[1];m=+x[2];}
+  else if((x=s.match(/^(\d{1,2})(\d{2})$/))){h=+x[1];m=+x[2];}
+  else return '';
+  if(h>23||m>59)return '';
+  return p2(h)+':'+p2(m);
+}
+function val(id){var e=document.getElementById(id);if(!e)return '';return (e.classList&&e.classList.contains('tm'))?normTime(e.value):e.value.trim();}
+var F={
+  dayTask:function(){var v=val('dtT');if(!v)return;var tm=val('dtH'),gs=chk('dtG');var o={id:uid(),title:v,due:UI.sel,done:false,scope:defScope(),color:colVal('dtC')};if(tm){o.time=tm;o.date=UI.sel;}S.tasks.push(o);save('tasks');render();if(tm&&gs)gSendAll([o]);},
+  addRule:function(){var k=val('ruK');var c=colVal('ruC');if(!k)return;if(!c){UI.ruMsg='Vyber barvu.';render();return;}UI.ruMsg='';var rs=getRules().slice();rs.push({k:k,c:c});S.meta.rules=rs;save('meta');render();},
+  addTrain:function(){
+    var d=val('trD');if(!d)return;var rep=val('trR'),ty=val('trY')||'Trénink',note=val('trN');
+    var title='Trénink: '+ty+(note?', '+note:'');
+    var made=addSeries({date:d,time:val('trF')||'18:00',end:val('trT')||'',title:title,scope:'osobni',src:'train',color:colVal('trC')},rep,val('trU'));
+    save('events');UI.sel=d;UI.cm=d.slice(0,7);UI.trMsg='';
+    var g=document.getElementById('trG');render();
+    if(g&&g.checked)gSendAll(made,rep);
+  },
+  planTask:function(f){var i=f.querySelector('input[type=text]');var v=i&&i.value.trim();if(!v)return;var hid=f.querySelector('input[type=hidden]');var o={id:uid(),title:v,due:f.dataset.d,done:false,scope:defScope()};if(hid&&hid.value){o.time=hid.value;o.date=o.due;}var m=/^(\d{1,2})[:.](\d{2})\s+(.+)$/.exec(v)||/^(\d{1,2})\s*(?:h|hod)\s+(.+)$/i.exec(v);if(m&&!o.time){var hh=+m[1],mm=m.length===4?+m[2]:0;if(hh<24&&mm<60){o.time=('0'+hh).slice(-2)+':'+('0'+mm).slice(-2);o.title=m[m.length-1];o.date=o.due;}}S.tasks.push(o);save('tasks');render();if(o.time)gSendAll([o]);},
+  addShift:function(){
+    var gs=chk('shG');var place=val('shP')||'tyn',tt=val('shN');
+    var made=addSeries({date:UI.sel,time:val('shF')||startFor(place),end:val('shT')||endFor(place,UI.sel),title:shiftTitle({place:place,title:tt}),scope:'prace',src:'shift'},val('shR'),val('shU'));
+    save('events');render();
+    if(gs)gSendAll(made,val('shR'));
+  },
+  quickTask:function(){var t=val('qt');if(!t)return;var tm=val('qtH');var o={id:uid(),title:t,due:TODAY,done:false,scope:defScope()};if(tm){o.time=tm;o.date=TODAY;}S.tasks.push(o);save('tasks');render();if(tm)gSendAll([o]);},
+  quickNote:function(){var t=val('qn');if(!t)return;S.notes.push({id:uid(),title:t,text:'',scope:defScope(),pin:false,at:TODAY});save('notes');render();},
+  addEvent:function(){var t=val('evT');if(!t)return;var gs=chk('evG'),rp=val('evR');var made=addSeries({date:UI.sel,time:val('evH'),end:val('evE'),title:t,scope:val('evS'),color:colVal('evC')},rp,val('evU'));save('events');render();if(gs)gSendAll(made,rp);},
+  addTask:function(){var t=val('tkT');if(!t)return;var due=val('tkD'),tm=val('tkH'),gs=chk('tkG');if(tm&&!due)due=TODAY;var o={id:uid(),title:t,due:due,done:false,scope:val('tkS'),color:colVal('tkC')};if(tm){o.time=tm;o.date=due;}S.tasks.push(o);save('tasks');render();if(tm&&gs)gSendAll([o]);},
+  addShop:function(){var t=val('spN');if(!t)return;S.shop.push({id:uid(),name:t,sec:val('spS'),done:false});save('shop');render();},
+  addHabit:function(){var t=val('hbN');if(!t)return;S.habits.list.push({id:uid(),name:t});save('habits');render();},
+  addGoal:function(){var t=val('glT');if(!t)return;S.goals.push({id:uid(),title:t,steps:[]});save('goals');render();},
+  addStep:function(f){var t=f.elements.s.value.trim();if(!t)return;var g=S.goals.filter(function(x){return x.id===f.dataset.id;})[0];if(g){g.steps.push({t:t,d:false});save('goals');render();}},
+  addNote:function(){var t=val('ntT');if(!t)return;S.notes.push({id:uid(),title:t,text:'',scope:val('ntS'),pin:false,at:TODAY});save('notes');render();},
+  addBlock:function(){var t=val('bkN');if(!t)return;S.sched.push({id:uid(),day:+val('bkD'),from:val('bkF')||'09:00',to:val('bkT')||'10:00',title:t,scope:val('bkS')});save('sched');render();},
+  addFin:function(){var a=parseFloat(val('fnA'));if(!(a>0))return;S.fin.push({id:uid(),date:val('fnD')||TODAY,type:val('fnY'),amount:a,cat:val('fnC'),note:val('fnN'),scope:val('fnS')});save('fin');render();}
+};
+
+function pgMark(){var b=document.querySelectorAll('.pgdots button');for(var i=0;i<b.length;i++)b[i].classList.toggle('on',i===(UI.pgi?1:0));}
+document.addEventListener('scroll',function(e){var sp=e.target;if(sp&&sp.classList&&sp.classList.contains('spread')&&sp.clientWidth){var i=sp.scrollLeft>sp.clientWidth/2?1:0;if(i!==UI.pgi){UI.pgi=i;pgMark();}}},true);
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&UI.dayOpen){UI.dayOpen=false;render();}});
+document.addEventListener('click',function(e){var el=e.target.closest('[data-act]');if(el&&A[el.dataset.act]){A[el.dataset.act](el);}});
+document.addEventListener('change',function(e){var tp=e.target;if(tp&&tp.classList&&tp.classList.contains('tps')){var w=tp.parentNode,hid=w.querySelector('input[type="hidden"]'),hh=w.querySelector('[data-p="h"]').value,mm=w.querySelector('[data-p="m"]').value;hid.value=hh===''?'':hh+':'+(mm||'00');}var tm=e.target;if(tm&&tm.classList&&tm.classList.contains('tm')){var nv=normTime(tm.value);if(nv||!tm.value.trim()){tm.value=nv;tm.classList.remove('bad');}else tm.classList.add('bad');}var el=e.target.closest('[data-change]');if(el&&C[el.dataset.change]){C[el.dataset.change](el);}if(dirtyRender&&!typing())render();});
+document.addEventListener('submit',function(e){var f=e.target.closest('[data-form]');if(!f)return;e.preventDefault();if(F[f.dataset.form])F[f.dataset.form](f);});
+document.addEventListener('input',function(e){if(e.target.id==='noteQ'){UI.noteQ=e.target.value;var l=document.getElementById('noteList');if(l)l.innerHTML=noteCards();}});
+document.addEventListener('focusout',function(){setTimeout(function(){if(dirtyRender&&!typing())render();},60);});
+
+/* theme toggle: follows the phone setting until the viewer picks */
+document.getElementById('themeBtn').addEventListener('click',function(){
+  var r=document.documentElement;var cur=r.getAttribute('data-theme');
+  var dark=cur?cur==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;
+  var next=dark?'light':'dark';r.setAttribute('data-theme',next);try{localStorage.setItem('diar.theme',next);}catch(e){}
+});
+try{var th=localStorage.getItem('diar.theme');if(th)document.documentElement.setAttribute('data-theme',th);}catch(e){}
+var bi='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+IC.cal+'</svg>';
+document.getElementById('brandIcon').innerHTML=bi;document.getElementById('brandIcon2').innerHTML=bi;
+
+/* the phone's date can roll over while the page stays open */
+setInterval(function(){var n=iso(new Date());if(n!==TODAY){TODAY=n;if(!typing())render();}},60000);
+
+setStatus();render();connect();
+})();
+</script>
+
+</html>
